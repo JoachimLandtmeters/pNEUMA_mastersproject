@@ -9,54 +9,9 @@ Overview
 
     * - docs
       - |docs|
-    * - tests
-      - | |travis| |appveyor| |requires|
-        | |codecov|
-    * - package
-      - | |version| |wheel| |supported-versions| |supported-implementations|
-        | |commits-since|
 .. |docs| image:: https://readthedocs.org/projects/pNEUMA_mastersproject/badge/?style=flat
     :target: https://readthedocs.org/projects/pNEUMA_mastersproject
     :alt: Documentation Status
-
-.. |travis| image:: https://api.travis-ci.com/JoachimLandtmeters/pNEUMA_mastersproject.svg?branch=master
-    :alt: Travis-CI Build Status
-    :target: https://travis-ci.com/github/JoachimLandtmeters/pNEUMA_mastersproject
-
-.. |appveyor| image:: https://ci.appveyor.com/api/projects/status/github/JoachimLandtmeters/pNEUMA_mastersproject?branch=master&svg=true
-    :alt: AppVeyor Build Status
-    :target: https://ci.appveyor.com/project/JoachimLandtmeters/pNEUMA_mastersproject
-
-.. |requires| image:: https://requires.io/github/JoachimLandtmeters/pNEUMA_mastersproject/requirements.svg?branch=master
-    :alt: Requirements Status
-    :target: https://requires.io/github/JoachimLandtmeters/pNEUMA_mastersproject/requirements/?branch=master
-
-.. |codecov| image:: https://codecov.io/gh/JoachimLandtmeters/pNEUMA_mastersproject/branch/master/graphs/badge.svg?branch=master
-    :alt: Coverage Status
-    :target: https://codecov.io/github/JoachimLandtmeters/pNEUMA_mastersproject
-
-.. |version| image:: https://img.shields.io/pypi/v/pneumampjl.svg
-    :alt: PyPI Package latest release
-    :target: https://pypi.org/project/pneumampjl
-
-.. |wheel| image:: https://img.shields.io/pypi/wheel/pneumampjl.svg
-    :alt: PyPI Wheel
-    :target: https://pypi.org/project/pneumampjl
-
-.. |supported-versions| image:: https://img.shields.io/pypi/pyversions/pneumampjl.svg
-    :alt: Supported versions
-    :target: https://pypi.org/project/pneumampjl
-
-.. |supported-implementations| image:: https://img.shields.io/pypi/implementation/pneumampjl.svg
-    :alt: Supported implementations
-    :target: https://pypi.org/project/pneumampjl
-
-.. |commits-since| image:: https://img.shields.io/github/commits-since/JoachimLandtmeters/pNEUMA_mastersproject/v0.0.1.svg
-    :alt: Commits since latest release
-    :target: https://github.com/JoachimLandtmeters/pNEUMA_mastersproject/compare/v0.0.1...master
-
-
-
 .. end-badges
 
 # Traffic characteristic estimation from large scale trajectory dataset
@@ -81,18 +36,12 @@ Apache License, Version 2.0.
 Installation
 ============
 
-::
-
-    pip install pneumampjl
-
-You can also install the in-development version with::
-
-    pip install https://github.com/JoachimLandtmeters/pNEUMA_mastersproject/archive/master.zip
-
+not published to pypi yet
 
 Documentation
 =============
 
+under construction
 
 https://pNEUMA_mastersproject.readthedocs.io/
 
@@ -100,23 +49,4 @@ https://pNEUMA_mastersproject.readthedocs.io/
 Development
 ===========
 
-To run all the tests run::
-
-    tox
-
-Note, to combine the coverage data from all the tox environments run:
-
-.. list-table::
-    :widths: 10 90
-    :stub-columns: 1
-
-    - - Windows
-      - ::
-
-            set PYTEST_ADDOPTS=--cov-append
-            tox
-
-    - - Other
-      - ::
-
-            PYTEST_ADDOPTS=--cov-append tox
+under development
