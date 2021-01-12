@@ -1,3 +1,14 @@
+
+tox.ini
+.travis*
+.readthedocs*
+.pre-commit*
+.coveragerc
+.cookiecutterrc
+.bumpversion*
+.appveyor*
+tests
+ci
 *.py[cod]
 __pycache__
 
