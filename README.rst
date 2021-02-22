@@ -57,7 +57,7 @@ ptrepack --complevel=1 --complib=blosc {hdf_filename_original} {hdf_filename_new
 
 (This was all done on Mac OS, so no assurance that everything will work immediately on other OS)
 
-https://pNEUMA_mastersproject.readthedocs.io/
+https://pneuma-mastersproject.readthedocs.io/en/latest/
 
 
 Development
