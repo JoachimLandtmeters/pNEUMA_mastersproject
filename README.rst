@@ -36,12 +36,26 @@ Apache License, Version 2.0.
 Installation
 ============
 
-not published to pypi yet
+No installation provided, just clone the repo and use the package locally.
+Following packages will be needed:
+- osmnx
+- leuvenmapmatching
+- h5py
+- geopy
+- numpy
+- tqdm
+- pyproj
 
 Documentation
 =============
 
-under construction
+Some updates were needed since the open data from the pNEUMA experiment had some name changes in the csv-files. The code now also uses hdf5 to store the datasets, this provides a cleaner way to store multiple datasets before and after some processing, such as ma-matched datasets or resampled datasets, all in one place with the possibility to compress easily as well as use across platforms.
+
+Automatic compressing is not done when overwriting datasets, therefore a workaround is to run the following command in the CLI (Command Line Interface):
+
+ptrepack --complevel=1 --complib=blosc {hdf_filename_original} {hdf_filename_new}
+
+(This was all done on Mac OS, so no assurance that everything will work immediately on other OS)
 
 https://pNEUMA_mastersproject.readthedocs.io/
 

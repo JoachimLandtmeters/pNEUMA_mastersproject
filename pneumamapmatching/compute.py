@@ -1,6 +1,5 @@
-# Calculate parameters from counts
+# Calculate parameters from countings
 # Draw FD by using the special points of fundamental diagrams
-import clean_counts as cc
 import pandas as pd
 import numpy as np
 import pickle
@@ -14,7 +13,7 @@ from scipy.optimize import curve_fit
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import PolynomialFeatures
-from statsmodels.graphics.gofplots import qqplot
+#from statsmodels.graphics.gofplots import qqplot
 import operator
 import scipy
 import geopy.distance as dist
@@ -60,20 +59,19 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
     long_distances_dfs = []
     # Pre-loading time steps
     max_d = 0
-    max_d = int(max([j['time'].values[len(j) - 1] for i, j in enumerate(gdf_traj)
-                     if j['time'].values[len(j) - 1] > max_d])) + 1
+    max_d = int(max([j['time'].values[len(j) - 1] for j in gdf_traj if j['time'].values[len(j) - 1] > max_d])) + 1
     # print(max_d)
     # +1 --> To make sure the last trajectory point is included
     time_st = []
     print('Pre-loading time steps for every trajectory …')
     for interval in tqdm(range(freq, max_d + freq, freq)):
         pre_interval = interval - freq
-        steps = [np.logical_and(j['time'].values >= pre_interval, interval > j['time'].values)
-                 for i, j in enumerate(gdf_traj)]
+        steps = [np.logical_and(j['time'].values >= pre_interval, interval > j['time'].values) for j in gdf_traj]
         time_st.append(steps)
     for i, det_link in d_gdf.iterrows():  # Counting vehicles for every used edge
         print(f"Counting on edge: {det_link['index']}")
-        loop_dist = round(det_link['loop_distance'], 3)
+        if double_loops:
+            loop_dist = round(det_link['loop_distance'], 3)
         edge_counts = collections.OrderedDict()
         edge_times = collections.OrderedDict()
         long_distances = []
@@ -85,20 +83,18 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
         vehicle_type[f"vehicle_index_{det_link['index']}"] = []
         vehicle_type[f"vehicle_crossing_{det_link['index']}"] = {'index': []}
         print('Matched trajectories on edge …')
-        for k, l in enumerate(tqdm(gdf_traj)):  # Check for every trajectory if it is on the edge
-            d1.append([tuple(xy) for xy in zip(gdf_traj[k]['Lat_x'], gdf_traj[k][
-                'Lon_x'])])  # Lat-Lon of first datapoint(u) of linestring
-            d2.append([tuple(xy) for xy in zip(gdf_traj[k]['Lat_y'], gdf_traj[k][
-                'Lon_y'])])  # Lat-Lon of second datapoint(v) of linestring
-            if np.logical_or(d_gdf.loc[i, 'edge'] in list(gdf_traj[k]['u_match'].values),
-                             d_gdf.loc[i, 'edge'] in list(gdf_traj[k]['v_match'].values)):
-                if l['Type'].values[0] in mode_exclusion:
+        for k, l in tenumerate(gdf_traj):  # Check for every trajectory if it is on the edge
+            d1.append([tuple(xy) for xy in zip(l['lat_x'], l['lon_x'])])  # Lat-Lon of first datapoint(u) of linestring
+            d2.append([tuple(xy) for xy in zip(l['lat_y'], l['lon_y'])])  # Lat-Lon of second datapoint(v) of linestring
+            if np.logical_or(d_gdf.loc[i, 'edge'] in list(l['u_match'].values),
+                             d_gdf.loc[i, 'edge'] in list(l['v_match'].values)):
+                if l['type'].values[0] in mode_exclusion:
                     continue
                 traj_match_values.append(l[['u_match', 'v_match', 'wrong_match', 'time', 'geometry', 'speed_x',
                                             'speed_y', 'bearing_x']].values)
                 index.append(k)
-                vehicle_type[f"vehicle_type_{det_link['index']}"].append(l['Type'].values[0])
-                vehicle_type[f"vehicle_index_{det_link['index']}"].append((k, f"ID:{l['Tracked Vehicle'].values[0]}"))
+                vehicle_type[f"vehicle_type_{det_link['index']}"].append(l['type'].values[0])
+                vehicle_type[f"vehicle_index_{det_link['index']}"].append((k, f"ID:{l['track_id'].values[0]}"))
                 vehicle_type[f"vehicle_crossing_{det_link['index']}"]['index'].append(k)
         for det in range(1, n_det + 1):
             edge_counts[f'counts_{det}'] = []
@@ -110,7 +106,7 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
         print('VKT and VHT for every time step …')
         tag = [[0] * n_det for i in range(0, len(index))]
         tag_lp = [[0] * n_det for i in range(0, len(index))]
-        for g, h in enumerate(tqdm(time_st)):  # for every time step
+        for g, h in tenumerate(time_st):  # for every time step
             # print('Step: ' + str(g + 1))
             cnt = {}
             det_time_st = {}
@@ -123,10 +119,12 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
             for m, n in enumerate(index):  # Every trajectory mapped to used edges
                 cnt_x = {}
                 traj_t = {}
+                """
                 if vehicle_dim:
                     veh_l = vehicle_dim[vehicle_type[f"vehicle_type_{det_link['index']}"][m]][1]
                 else:
                     veh_l = loop_dist
+                """
                 for det in range(1, n_det + 1):
                     cnt_x[f'x_{det}'] = 0
                     traj_t[f't_{det}'] = 0
@@ -151,7 +149,9 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
                                     c = (c.y, c.x)
                                     d1c = round(dist.distance(d1[n][idx], c).m, 3)
                                     dc2 = round(dist.distance(c, d2[n][idx]).m, 3)
-                                    cnt_x[f'x_{det}'] = dc2
+                                    cnt_x[f'x_{det}'] = 1
+                                    if double_loops:
+                                        cnt_x[f'x_{det}'] = dc2
                                     traj_t[f't_{det}'] = round(traj_match_values[m][idx][3] - 1000 + d1c / d12 * 1000)
                                     if traj_t[f't_{det}'] < (freq * g):
                                         edge_times[f'times_{det}'][g - 1][m] = traj_t[f't_{det}']
@@ -162,6 +162,9 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
                                         edge_counts[f'counts_{det}'][g - 1][m] = round(
                                             dist.distance(c, d2[n][idx]).m -
                                             cnt_x[f'x_{det}'], 3)
+                                        if not double_loops:
+                                            cnt_x[f'x_{det}'] = 0
+                                            edge_counts[f'counts_{det}'][g - 1][m] = 1
                                         traj_t[f't_{det}'] = 0
                                 if double_loops:
                                     if traj_match_values[m][idx][4].intersects(det_link[f'det_edge_{det}bis']):
@@ -245,178 +248,13 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
         edge_counts.update(edge_times)
         counts = pd.DataFrame(edge_counts)
         detector_counts.append(counts)
-        long_distances = pd.DataFrame(long_distances, columns=['Distance', 'Trajectory', 'Line Index', 'Wrong Match',
-                                                               'Time Step', 'Detector'])
+        long_distances = pd.DataFrame(long_distances, columns=['distance', 'trajectory', 'line_index', 'wrong_match',
+                                                               'time_step', 'detector'])
         long_distances_dfs.append(long_distances)
         df_veh = pd.DataFrame(vehicle_type[f"vehicle_crossing_{det_link['index']}"])
         vehicle_type[f"vehicle_crossing_{det_link['index']}"] = df_veh
-    return {'counts': detector_counts, 'detectors': d_gdf, 'vehicle type': vehicle_type,
+    return {'counts': detector_counts, 'detectors': d_gdf, 'vehicle_type': vehicle_type,
             'long distances': long_distances_dfs}
-
-
-def calculate_parameters_area(det_c, lane_width):
-    edges_parameters = []
-    hour = 3600000  # Hour in ms to normalize units of flow
-    # det_c info
-    n_det = det_c[3]['number_of_det'][0]
-    freq = det_c[3]['frequency'][0]
-    double = det_c[3]['double'][0]
-    vehicle_width = det_c[5]
-    # Lanes to float
-    lanes = []
-    for x, y in det_c[1]['lanes'].iteritems():
-        if type(y) is not list:
-            y = float(y)
-            if np.isnan(y):  # replace nan values with default number of lanes
-                y = 1
-            lanes.append(y)
-        else:
-            y = [float(s) for s in y]
-            y = min(y)
-            lanes.append(y)
-    det_c[1] = det_c[1].assign(lanes_adj=lanes)
-    # Clean counts
-    det_error = []
-    summary_clean_counts = []
-    # print(det_error)
-    for a, b in enumerate(tqdm(det_c[0])):  # List of detector counts
-        error = cc.cleaning_counting(b, double_loops=double, n_det=n_det)
-        summary = {'edge_index': det_c[1]['index'].values[a], 'list_clean_counts': []}
-        for key, value in error.items():
-            t_count = (key, len(value))
-            summary['list_clean_counts'].append(t_count)
-        print(summary)
-        summary_clean_counts.append(summary)
-        det_error.append(error)
-        n_edge = det_c[1]['index'].values[a]
-        loop_distance = det_c[1]['loop_distance'].values[a]
-        max_density = freq / (freq * loop_distance * lanes[a]) * 1000
-        # Area calculation
-        road_area = loop_distance * lane_width
-        vehicle_type = det_c[2][f'vehicle_type_{n_edge}']
-        free_flow = 100
-        print(road_area)
-        # Density at zero flow and maximum occupancy (100%)
-        parameters = {}
-        time_spent_loops = {}
-        traveled_distance = {}
-        occupancy = {}
-        parameters['index'] = [0] * len(b)
-        parameters['index'][0] = n_edge
-        parameters['loop_distance'] = [0] * len(b)
-        parameters['loop_distance'][0] = loop_distance
-        for det in range(1, n_det + 1):  # For each detector pair
-            parameters[f'density_{det}'] = []
-            parameters[f'flow_{det}'] = []
-            parameters[f'speed_{det}'] = []
-            parameters[f'occupancy_{det}'] = []
-            parameters[f'flow_occ_{det}'] = []
-            parameters[f'density_occ_{det}'] = []
-            parameters[f'speed_occ_{det}'] = []
-            parameters[f'length_{det}'] = []
-            parameters[f'vehicle_area_{det}'] = []
-            t_cross = b[[f'times_{det}', f'times_lp_{det}', f'occ_times_in_{det}', f'occ_times_out_{det}']].values
-            q_cross = b[[f'counts_{det}', f'counts_lp_{det}']].values
-            for c, d in b.iterrows():  # Go over each time step of edge counts
-                time_spent_loops[f'time_spent_loop_{det}'] = []
-                traveled_distance[f'traveled_dist_{det}'] = []
-                occupancy[f'occupancy_{det}'] = []
-                occupancy[f'flow_occupancy_{det}'] = []
-                vehicle_length = []
-                vehicle_area = []
-                for e in range(0, len(b.loc[0, f'times_1'])):  # For each trajectory
-                    if e in det_error[a][f'no_cross_{det}']:
-                        continue
-                    elif e in det_error[a][f'partly_cross_{det}']:
-                        if t_cross[c][2][e] > 0:
-                            if t_cross[c][3][e] > 0:
-                                to_1 = t_cross[c][3][e] - t_cross[c][2][e]
-                                tow_1 = to_1 * vehicle_width[vehicle_type[e]][0]  # *vehicle_width[vehicle_type[e]][1])
-                                qo_1 = 1 * vehicle_width[vehicle_type[e]][0]
-                                occupancy[f'flow_occupancy_{det}'].append(qo_1)
-                                occupancy[f'occupancy_{det}'].append(tow_1)
-                            else:
-                                to_2 = (freq * (c + 1) - t_cross[c][2][e])
-                                tow_2 = to_2 * vehicle_width[vehicle_type[e]][0]
-                                qo_2 = 0
-                                if c < len(b) - 1:  # Change entry time of vehicle in loop
-                                    t_cross[c + 1][2][e] = freq * (c + 1)
-                                occupancy[f'flow_occupancy_{det}'].append(qo_2)
-                                occupancy[f'occupancy_{det}'].append(tow_2)
-                            vehicle_length.append(vehicle_width[vehicle_type[e]][1])
-                    else:
-                        if t_cross[c][0][e] > 0:
-                            if t_cross[c][1][e] > 0:
-                                t_1 = (t_cross[c][1][e] - t_cross[c][0][e])  # / (frequency * loop_distance
-                                # * lanes[n_edge]) * 1000
-                                ao_1 = t_1 * vehicle_width[vehicle_type[e]][0]  # *vehicle_width[vehicle_type[e]][1])
-                                time_spent_loops[f'time_spent_loop_{det}'].append(ao_1)
-                                # print((k_1, c))
-                                q_1 = (q_cross[c][0][e] + q_cross[c][1][e])  # * vehicle_width[vehicle_type[e]][0]
-                                traveled_distance[f'traveled_dist_{det}'].append(q_1)
-                            else:
-                                t_2 = (freq * (c + 1) - t_cross[c][0][e])  # / (frequency * loop_distance
-                                # * lanes[n_edge]) * 1000
-                                if c < len(b) - 1:  # Change entry time of vehicle in loop
-                                    # Vehicles longer than one time step between detectors
-                                    t_cross[c + 1][0][e] = freq * (c + 1)
-                                ao_2 = t_2 * vehicle_width[vehicle_type[e]][0]  # *vehicle_width[vehicle_type[e]][1])
-                                time_spent_loops[f'time_spent_loop_{det}'].append(ao_2)
-                                q_2 = (q_cross[c][0][e] + q_cross[c][1][e])  # * vehicle_width[vehicle_type[e]][0]
-                                traveled_distance[f'traveled_dist_{det}'].append(q_2)
-                            vehicle_area.append(np.prod(vehicle_width[vehicle_type[e]]))
-                        if t_cross[c][2][e] > 0:
-                            if t_cross[c][3][e] > 0:
-                                to_1 = t_cross[c][3][e] - t_cross[c][2][e]
-                                tow_1 = to_1 * vehicle_width[vehicle_type[e]][0]  # *vehicle_width[vehicle_type[e]][1])
-                                qo_1 = 1 * vehicle_width[vehicle_type[e]][0]
-                                occupancy[f'flow_occupancy_{det}'].append(qo_1)
-                                occupancy[f'occupancy_{det}'].append(tow_1)
-                            else:
-                                to_2 = (freq * (c + 1) - t_cross[c][2][e])
-                                tow_2 = to_2 * vehicle_width[vehicle_type[e]][0]
-                                qo_2 = 0
-                                if c < len(b) - 1:  # Change entry time of vehicle in loop
-                                    t_cross[c + 1][2][e] = freq * (c + 1)
-                                occupancy[f'flow_occupancy_{det}'].append(qo_2)
-                                occupancy[f'occupancy_{det}'].append(tow_2)
-                            vehicle_length.append(vehicle_width[vehicle_type[e]][1])
-                # print(time_spent_loops['time_spent_loop_' + str(det)],traveled_distance['traveled_dist_' + str(det)])
-                k_time_step = (sum(time_spent_loops[f'time_spent_loop_{det}']) /
-                               (freq * loop_distance * lane_width) * 1000)
-                q_time_step = (sum(traveled_distance[f'traveled_dist_{det}']) /
-                               (freq * loop_distance) * hour)
-                if vehicle_length:
-                    m_veh_l = np.mean(vehicle_length)
-                else:
-                    m_veh_l = 0
-                parameters[f'length_{det}'].append(m_veh_l)
-                occ = (sum(occupancy[f'occupancy_{det}'])) / (freq * lanes[a] * lane_width)
-                occ_flow = (sum(occupancy[f'flow_occupancy_{det}'])) / (freq * lane_width) * hour
-                parameters[f'density_{det}'].append(k_time_step)
-                parameters[f'flow_{det}'].append(q_time_step)
-                parameters[f'occupancy_{det}'].append(occ)
-                parameters[f'flow_occ_{det}'].append(occ_flow)
-                if occ:
-                    parameters[f'density_occ_{det}'].append(occ / m_veh_l * lanes[a] * 1000)
-                    u_occ = round(occ_flow / (occ / m_veh_l * lanes[a] * 1000), 2)
-                    parameters[f'speed_occ_{det}'].append(u_occ)
-                else:
-                    parameters[f'density_occ_{det}'].append(0)
-                    parameters[f'speed_occ_{det}'].append(0)
-                if k_time_step:
-                    u = round(q_time_step / k_time_step, 2)
-                    parameters[f'vehicle_area_{det}'].append(np.mean(vehicle_area))
-                    if u < free_flow:
-                        parameters[f'speed_{det}'].append(u)
-                    else:
-                        parameters[f'speed_{det}'].append(free_flow)
-                else:
-                    parameters[f'speed_{det}'].append(0)
-                    parameters[f'vehicle_area_{det}'].append(0)
-        calc_parameters = pd.DataFrame(parameters)
-        edges_parameters.append(calc_parameters)
-    return edges_parameters
 
 
 def save_plot_fd(det_c, parameters_list, parameters_list_mode_sel=None, parameters_list_ao=None, labels=None,
@@ -487,7 +325,8 @@ def save_plot_fd(det_c, parameters_list, parameters_list_mode_sel=None, paramete
 class TrafficAnalysis:
     adjustment_stopped = False, 0
 
-    def __init__(self, d_gdf, gdf_traj, gdf_netw, n_det, freq, double_loops, dfi, loop_distance, mode_exclusion=(),
+    def __init__(self, d_gdf, gdf_traj, gdf_netw, n_det, freq, dfi, loop_distance,
+                 double_loops, mode_exclusion=(),
                  vehicle_dim=None):
         self.IDarterial = list(d_gdf['index'].values)
         self.network = gdf_netw
@@ -495,7 +334,7 @@ class TrafficAnalysis:
         self.frequency = freq
         self.dfi = dfi
         self.double = double_loops
-        self.loop_distance = loop_distance
+        self.loop_distance = None
         self.modes_excluded = mode_exclusion
         self.vehicle_dimensions = vehicle_dim
         if vehicle_dim is None:
@@ -505,14 +344,19 @@ class TrafficAnalysis:
             self.vehicle_dimensions = vehicle_dim
         self.traffic_counts = count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion,
                                              self.vehicle_dimensions)
-        self.traffic_parameters = self.calculate_parameters()
-        ta_filter = self.filter_stopped_vehicles()
-        self.traffic_parameters_adj = self.adjustment_stopped_vehicles()
-        self.traffic_parameters_noLS = ta_filter[0]  # No long stops
-        self.filter_stopped = ta_filter[1]
-        self.traffic_parameters_arterial = []
-        self.traffic_parameters_arterial_network = []
-        self.traffic_parameters_agg = []
+        if double_loops:
+            self.loop_distance = loop_distance
+            self.traffic_parameters = self.calculate_parameters()
+            ta_filter = self.filter_stopped_vehicles()
+            self.traffic_parameters_adj = self.adjustment_stopped_vehicles()
+            self.traffic_parameters_noLS = ta_filter[0]  # No long stops
+            self.filter_stopped = ta_filter[1]
+            self.traffic_parameters_arterial = []
+            self.traffic_parameters_arterial_network = []
+            self.traffic_parameters_agg = []
+
+    def crossings_detectors(self, detector='times_1'):
+        ind_cross = self.traffic_counts['counts']
 
     def multiple_crossings(self):
         counts_dict = self.traffic_counts
@@ -535,7 +379,7 @@ class TrafficAnalysis:
                                     append(cnt[det - 1][i])
         return multi_list
 
-    def calculate_parameters(self, mode_exclusion=(), area_density=(False, 0)):
+    def calculate_parameters(self, mode_exclusion=()):
         edges_parameters = []
         hour = 3600000  # Hour in ms to normalize units of flow
         # det_c info
@@ -559,8 +403,6 @@ class TrafficAnalysis:
         # Clean counts
         det_error = []
         summary_clean_counts = []
-        if area_density[0]:
-            lane_width = area_density[1]
         # print(det_error)
         for a, b in enumerate(tqdm(self.traffic_counts['counts'])):  # List of detector counts
             error = cleaning_counting(b, double_loops=double, n_det=n_det)
@@ -574,25 +416,22 @@ class TrafficAnalysis:
             n_edge = self.traffic_counts['detectors']['index'].values[a]
             loop_distance = self.traffic_counts['detectors']['loop_distance'].values[a]
             free_flow = 100
-            vehicle_type = self.traffic_counts['vehicle type'][f'vehicle_type_{n_edge}']
+            vehicle_type = self.traffic_counts['vehicle_type'][f'vehicle_type_{n_edge}']
             get_veh_type = collections.Counter(vehicle_type)
             total_matched = len(vehicle_type)
             # Density at zero flow and maximum occupancy (100%)
             parameters = {}
-            parameters['index'] = np.array([0] * len(b))
+            parameters['index'] = [0] * len(b)
             parameters['index'][0] = n_edge
-            parameters['loop_distance'] = np.array([0] * len(b))
+            parameters['loop_distance'] = [0] * len(b)
             parameters['loop_distance'][0] = loop_distance
-            parameters['number_of_det'] = np.array([0] * len(b))
+            parameters['number_of_det'] = [0] * len(b)
             parameters['number_of_det'][0] = n_det
-            parameters['frequency'] = np.array([0] * len(b))
+            parameters['frequency'] = [0] * len(b)
             parameters['frequency'][0] = freq
             for det in range(1, n_det + 1):  # For each detector pair
                 parameters[f'density_{det}'] = []
                 parameters[f'density_lane_{det}'] = []
-                if area_density[0]:
-                    parameters[f'density_ao_{det}'] = []
-                    parameters[f'density_ao_lane_{det}'] = []
                 parameters[f'flow_{det}'] = []
                 parameters[f'flow_lane_{det}'] = []
                 parameters[f'speed_{det}'] = []
@@ -606,25 +445,21 @@ class TrafficAnalysis:
                 parameters[f'vehicles_{det}'] = []
                 parameters[f'stopped_vehicles_{det}'] = []
                 parameters[f'stops_{det}'] = []
-                parameters[f'individual_speed_{det}'] = []
                 for veh_type in list(get_veh_type):
                     parameters[f'{veh_type}_{det}'] = []
-                t_cross = b.loc[:, [f'times_{det}', f'times_lp_{det}']].values
+                df = b.copy(deep=True)
+                t_cross = df.loc[:, [f'times_{det}', f'times_lp_{det}']].values
                 #  , f'occ_times_in_{det}', f'occ_times_out_{det}']].values
-                q_cross = b.loc[:, [f'counts_{det}', f'counts_lp_{det}']].values
-                for c, d in b.iterrows():  # Go over each time step of edge counts
+                q_cross = df.loc[:, [f'counts_{det}', f'counts_lp_{det}']].values
+                for c, d in df.iterrows():  # Go over each time step of edge counts
                     time_spent_loops = []
                     traveled_distance = []
-                    if area_density[0]:
-                        time_spent_loops_ao = []
                     occupancy = []
                     flow_occupancy = []
                     vehicle_length = []
                     vehicle_area = []
                     modal_shares = {k: 0 for k in list(get_veh_type)}
-                    stopped_vehicle = np.array([0] * total_matched)
-                    ind_speed = np.empty(total_matched)
-                    ind_speed[:] = np.nan
+                    stopped_vehicle = [0] * total_matched
                     for e in range(0, total_matched):  # For each trajectory
                         if e in det_error[a][f'no_cross_{det}']:
                             continue
@@ -654,41 +489,21 @@ class TrafficAnalysis:
                                     if t_cross[c][1][e] > 0:
                                         t_1 = (t_cross[c][1][e] - t_cross[c][0][e])  # / (frequency * loop_distance
                                         # * lanes[n_edge]) * 1000
+                                        time_spent_loops.append(t_1)
+                                        # print((k_1, c))
                                         q_1 = q_cross[c][0][e] + q_cross[c][1][e]
                                         traveled_distance.append(q_1)
-                                        time_spent_loops.append(t_1)
-                                        if area_density[0]:
-                                            if vehicle_type[e] == 'Motorcycle':
-                                                ao_1 = t_1 * self.vehicle_dimensions[vehicle_type[e]][0]
-                                            else:
-                                                ao_1 = t_1 * lane_width
-                                            time_spent_loops_ao.append(ao_1)
-                                        # print((k_1, c))
-                                        if t_1 > 0:
-                                            ind_speed[e] = q_1 / t_1 * 3600  # km/h
-                                        else:
-                                            print(e, c, det, a)
                                     else:
                                         t_2 = (freq * (c + 1) - t_cross[c][0][e])  # / (frequency * loop_distance
                                         # * lanes[n_edge]) * 1000
-                                        if c < len(b) - 1:  # Change entry time of vehicle in loop
+                                        if c < len(df) - 1:  # Change entry time of vehicle in loop
                                             # Vehicles longer than one time step between detectors
                                             t_cross[c + 1][0][e] = freq * (c + 1)
+                                        time_spent_loops.append(t_2)
                                         q_2 = q_cross[c][0][e] + q_cross[c][1][e]
                                         traveled_distance.append(q_2)
-                                        time_spent_loops.append(t_2)
-                                        if area_density[0]:
-                                            if vehicle_type[e] == 'Motorcycle':
-                                                ao_2 = t_2 * self.vehicle_dimensions[vehicle_type[e]][0]
-                                            else:
-                                                ao_2 = t_2 * lane_width
-                                            time_spent_loops_ao.append(ao_2)
                                         if t_2 == freq:
                                             stopped_vehicle[e] = 1
-                                        if t_2 > 0:
-                                            ind_speed[e] = q_2 / t_2 * 3600
-                                        else:
-                                            print(e, c, det, a)
                                     vehicle_area.append(np.prod(vehicle_width[vehicle_type[e]]))
                                     modal_shares[vehicle_type[e]] += 1
                                 """
@@ -708,15 +523,10 @@ class TrafficAnalysis:
                                         occupancy.append(to_2)
                                     vehicle_length.append(vehicle_width[vehicle_type[e]][1])
                                 """
-                    if area_density[0]:
-                        k_time_step_ao = (sum(time_spent_loops_ao) /
-                                       (freq * loop_distance * lane_width) * 1000)
-                        parameters[f'density_ao_{det}'].append(k_time_step_ao)
-                        parameters[f'density_ao_lane_{det}'].append(k_time_step_ao / lanes[a])
                     k_time_step = (sum(time_spent_loops) /
                                    (freq * loop_distance) * 1000)
-                        # if sum(time_spent_loops['time_spent_loop_' + str(det)]) > freq:
-                        # print(sum(time_spent_loops['time_spent_loop_' + str(det)]), c)
+                    # if sum(time_spent_loops['time_spent_loop_' + str(det)]) > freq:
+                    # print(sum(time_spent_loops['time_spent_loop_' + str(det)]), c)
                     q_time_step = (sum(traveled_distance) /
                                    (freq * loop_distance) * hour)
                     # occ = (sum(occupancy)) / (freq * lanes[a])
@@ -729,7 +539,6 @@ class TrafficAnalysis:
                     # parameters[f'flow_occ_{det}'].append(occ_flow / lanes[a])
                     parameters[f'stopped_vehicles_{det}'].append(stopped_vehicle)
                     parameters[f'stops_{det}'].append(sum(stopped_vehicle))
-                    parameters[f'individual_speed_{det}'].append(ind_speed)
                     """
                     if vehicle_length:
                         m_veh_l = np.mean(vehicle_length)
@@ -784,7 +593,7 @@ class TrafficAnalysis:
                 filter[f'density_{d}'] = list(param[f'density_{d}'].values)
                 filter[f'lanes_{d}'] = [lanes[ind]] * len(param)
                 for id, vt in enumerate(list(collections.Counter(
-                        self.traffic_counts['vehicle type'][f'vehicle_type_{edge_id[ind]}']).keys())):
+                        self.traffic_counts['vehicle_type'][f'vehicle_type_{edge_id[ind]}']).keys())):
                     filter[f'{vt}_{d}'] = list(param[f'{vt}_{d}'].values)
                     param = param.drop([f'{vt}_{d}'], axis=1)
             for k, v in param.iterrows():
@@ -805,16 +614,13 @@ class TrafficAnalysis:
                         tag[det - 1] = 0
             for det in range(1, n_det + 1):
                 filter[f'density_lane_{det}'] = np.array(filter[f'density_{det}']) / np.array(filter[f'lanes_{det}'])
-                filter[f'flow_lane_{det}'] = np.array(param[f'flow_{det}']) / np.array(filter[f'lanes_{det}'])
                 filter[f'speed_{det}'] = [
                     param[f'flow_{det}'][k] / filter[f'density_{det}'][k] if filter[f'density_{det}'][k]
                     else 0 for k, v in param.iterrows()]
-                param = param.drop([f'density_{det}', f'density_lane_{det}', f'flow_lane_{det}',
-                                    f'speed_{det}'], axis=1)
+                param = param.drop([f'density_{det}', f'density_lane_{det}', f'speed_{det}'], axis=1)
                 # param[f'density_adj_{det}'] = param[f'density_{det}'] - filter[f'f_{det}']
             filter = pd.DataFrame(filter)
             param = pd.concat([param, filter], axis=1)
-            #print(param.lanes_2, param.density_lane_2)
             for det in range(1, n_det + 1):
                 param = param.drop([f'lanes_{det}'], axis=1)
             new_param_list.append(param)
@@ -859,15 +665,15 @@ class TrafficAnalysis:
                 filter[f'vehicles_{d}'] = list(param[f'vehicles_{d}'].values)
                 filter[f'stops_{d}'] = list(param[f'stops_{d}'].values)
                 for id, vt in enumerate(list(collections.Counter(
-                        self.traffic_counts['vehicle type'][f'vehicle_type_{edge_id[ind]}']).keys())):
+                        self.traffic_counts['vehicle_type'][f'vehicle_type_{edge_id[ind]}']).keys())):
                     filter[f'{vt}_{d}'] = list(param[f'{vt}_{d}'].values)
                     param = param.drop([f'{vt}_{d}'], axis=1)
                 # filter[f'f_{d}'] = [0] * len(param)
                 for r, e in enumerate(stp_id[d - 1]):
-                    veh = self.traffic_counts['vehicle type'][f'vehicle_type_{edge_id[ind]}'][e[0]]
+                    veh = self.traffic_counts['vehicle_type'][f'vehicle_type_{edge_id[ind]}'][e[0]]
                     if e[0] not in f_id[d - 1]:
                         f_id[d - 1].append(e[0])
-                        f_veh_id[d - 1].append(self.traffic_counts['vehicle type']
+                        f_veh_id[d - 1].append(self.traffic_counts['vehicle_type']
                                                [f'vehicle_index_{edge_id[ind]}'][e[0]][0])
                         f_type[d - 1].append(veh)
                     filter[f'density_{d}'][e[1]] -= filter_value
@@ -895,59 +701,11 @@ class TrafficAnalysis:
             self.adjustment_stopped = True, stop_time
         return new_param_list, id_list
 
-    def get_max_flow_fds(self, aggregated_parameters=False, adjusted_parameters=False, percentile=95,
-                         mode='Motorcycle', per_lane=True):
-        n_det = self.numberofdetectors
-        dfi = self.dfi
-        loop_distances = list(self.traffic_counts['detectors']['loop_distance'].values)
-        edge_id = list(self.traffic_counts['detectors']['index'].values)
-        edge_length = list(self.traffic_counts['detectors']['length'].values)
-        edge_lanes = list(self.traffic_counts['detectors']['lanes_adj'].values)
-        parameters = self.traffic_parameters
-        if adjusted_parameters:
-            parameters = self.traffic_parameters_adj
-        if aggregated_parameters:
-            parameters = self.traffic_parameters_agg
-        lane = '_'
-        if per_lane:
-            lane = '_lane_'
-        dict_fd = {'edge_id': [], 'lanes': [], 'detector': [], 'short_edge': [], f'q_pct{percentile}': [],
-                   f'k_min': [], f'k_max': [], f'k_delta': [], f'{mode}_share': []}
-        for ind, param in tenumerate(parameters):
-            if edge_length[ind] >= (dfi * 2 + self.loop_distance * n_det):
-                for d in range(1, n_det + 1):
-                    val_q = np.percentile(param[f'flow{lane}{d}'], percentile)
-                    dict_fd['edge_id'].append(edge_id[ind])
-                    dict_fd['lanes'].append(edge_lanes[ind])
-                    dict_fd['detector'].append(d)
-                    dict_fd['short_edge'].append(False)
-                    dict_fd[f'q_pct{percentile}'].append(val_q)
-                    df = param[param[f'flow{lane}{d}'] >= val_q]
-                    dict_fd[f'k_min'].append(min(df[f'density{lane}{d}']))
-                    dict_fd[f'k_max'].append(max(df[f'density{lane}{d}']))
-                    dict_fd[f'k_delta'].append(max(df[f'density{lane}{d}']) - min(df[f'density{lane}{d}']))
-                    dict_fd[f'{mode}_share'].append(np.median(df[f'{mode}_{d}']))
-            else:
-                val_q = np.percentile(param[f'flow_lane_1'], percentile)
-                dict_fd['edge_id'].append(edge_id[ind])
-                dict_fd['lanes'].append(edge_lanes[ind])
-                dict_fd['detector'].append(1)
-                dict_fd['short_edge'].append(True)
-                dict_fd[f'q_pct{percentile}'].append(val_q)
-                df = param[param[f'flow{lane}1'] >= val_q]
-                dict_fd[f'k_min'].append(min(df[f'density{lane}1']))
-                dict_fd[f'k_max'].append(max(df[f'density{lane}1']))
-                dict_fd[f'k_delta'].append(max(df[f'density{lane}1']) - min(df[f'density{lane}1']))
-                dict_fd[f'{mode}_share'].append(np.median(df[f'{mode}_1']))
-        df_fd = pd.DataFrame(dict_fd)
-        return df_fd
-
     def arterial_parameters(self, aggregation_detector, mode=None, aggregated_parameters=False,
-                            adjusted_parameters=False, excl_highway_type=(), skip_edges=True, print_info=False):
+                            adjusted_parameters=False):
         # mode is tuple with (link of arterial, mode, mode share)
         n_det = self.numberofdetectors
         edge_id = list(self.traffic_counts['detectors']['index'].values)
-        edge_type = list(self.traffic_counts['detectors']['highway_adj'].values)
         index_complete_counts = []
         parameters = self.traffic_parameters
         if aggregated_parameters:
@@ -959,14 +717,11 @@ class TrafficAnalysis:
             for det in range(1, n_det + 1):
                 s.append(sum(param[f'vehicles_{det}']))
             mu = np.mean(s)
-            if 0 in s and skip_edges: #mu * 1.2 < max(s):
+            if mu * 1.2 < max(s):
                 # 20 percent difference between mean of sum of vehicles per time step and maximum of one detector
                 # raise Exception(f'Link with no counts for some detectors: check parameter list. Sum of vehicles for every'
                 # f'detector is {s} on edge {edge_id[ind]}')
-                if print_info:
-                    print('Big differences between detector counts')
-            elif edge_type[ind] in excl_highway_type:
-                continue
+                print('Big differences between detector counts')
             else:
                 index_complete_counts.append(ind)
         arterial_length = sum(self.traffic_counts['detectors']['length']
@@ -979,10 +734,9 @@ class TrafficAnalysis:
             par_mode = parameters[edge_id.index(mode[0])]
             ind_mode = list(par_mode[par_mode[f'{mode[1]}_{det}'] > mode[2]].index)
         for ind, param in enumerate(parameters):
-            if ind not in index_complete_counts and skip_edges:
-                if print_info:
-                    print(f'skip: {edge_id[ind]}')
-                continue
+            # if ind not in index_complete_counts:
+            # print(f'skip: {edge_id[ind]}')
+            # continue
             denom = (self.traffic_counts['detectors']['length'].values[ind])
             # * counts_dict['counts']['detectors']['lanes_adj'].values[ind])
             production = 0
@@ -1014,18 +768,14 @@ class TrafficAnalysis:
             art_parameters = [art_parameters, ind_mode]
         return art_parameters
 
-    def arterial_parameters_all(self, aggregated_parameters=False, adjusted_parameters=False, network_wide=False
-                                , excl_highway_type=(), no_short_edges=False, skip_edges=True, print_info=False):
+    def arterial_parameters_all(self, aggregated_parameters=False, adjusted_parameters=False, network_wide=False):
         # mode is tuple with (link of arterial, mode, mode share)
         n_det = self.numberofdetectors
         edge_id = list(self.traffic_counts['detectors']['index'].values)
         edge_length = list(self.traffic_counts['detectors']['length'].values)
-        edge_type = list(self.traffic_counts['detectors']['highway_adj'].values)
-        edge_lanes = list(self.traffic_counts['detectors']['lanes_adj'].values)
         loop_distances = list(self.traffic_counts['detectors']['loop_distance'].values)
         index_complete_counts = []
         parameters = self.traffic_parameters
-        lane_length = sum(self.traffic_counts['detectors']['length'] * self.traffic_counts['detectors']['lanes_adj'])
         if aggregated_parameters:
             parameters = self.traffic_parameters_agg
         elif adjusted_parameters:
@@ -1035,25 +785,13 @@ class TrafficAnalysis:
             for det in range(1, n_det + 1):
                 s.append(sum(param[f'vehicles_{det}']))
             mu = np.mean(s)
-            if 0 in s and skip_edges:
+            if mu * 1.2 < max(s):
                 # 20 percent difference between mean of sum of vehicles per time step and maximum of one detector
                 # raise Exception(f'Link with no counts for some detectors: check parameter list. Sum of vehicles for every'
                 # f'detector is {s} on edge {edge_id[ind]}')
-                if print_info:
-                    print('Big differences between detector counts')
-            elif edge_type[ind] in excl_highway_type:
-                continue
+                print('Big differences between detector counts')
             else:
                 index_complete_counts.append(ind)
-        if len(excl_highway_type) > 0:
-            skip_edges = True
-        if skip_edges:
-            lane_length = sum(self.traffic_counts['detectors']
-                              [self.traffic_counts['detectors'].index.isin(index_complete_counts)]['length'] *
-                              self.traffic_counts['detectors']
-                              [self.traffic_counts['detectors'].index.isin(index_complete_counts)]['lanes_adj'])
-        if print_info:
-            print(len(index_complete_counts), index_complete_counts)
         arterial_length = sum(self.traffic_counts['detectors']['length']
                               * self.traffic_counts['detectors']['lanes_adj'])
         # print(arterial_length)
@@ -1064,13 +802,12 @@ class TrafficAnalysis:
             tot_loop_distance = 0
             length_netw = 0
         for ind, param in enumerate(parameters):
-            if ind not in index_complete_counts and skip_edges:
-                if print_info:
-                    print(f'skip: {edge_id[ind]}')
+            # if ind not in index_complete_counts:
+            # print(f'skip: {edge_id[ind]}')
+            # continue
+            if loop_distances[ind] < self.loop_distance:
                 continue
-            elif loop_distances[ind] < self.loop_distance:
-                continue
-            elif edge_length[ind] >= (self.dfi * 2 + loop_distances[ind] * n_det):
+            elif edge_length[ind] >= (self.dfi * 2 + loop_distances[ind]):
                 flow = param['flow_1'].copy()
                 density = param['density_1'].copy()
                 for det in range(2, n_det + 1):
@@ -1083,12 +820,10 @@ class TrafficAnalysis:
                     length_netw += edge_length[ind]
             else:
                 avg_flow = param['flow_1'].copy()
-                avg_density = param['density_1'].copy()
+                avg_density = param['density_2'].copy()
                 if network_wide:
                     tot_loop_distance += loop_distances[ind]
                     length_netw += edge_length[ind]
-                if no_short_edges:
-                    continue
             denom = edge_length[ind]
             # * counts_dict['counts']['detectors']['lanes_adj'].values[ind])
             production = 0
@@ -1120,15 +855,10 @@ class TrafficAnalysis:
         else:
             parameters_arterial['accumulation_arterial'] = (parameters_arterial['accumulation_arterial']
                                                             / 1000)
-            parameters_arterial['average_density_arterial'] = (parameters_arterial['accumulation_arterial'] /
-                                                               lane_length)
             parameters_arterial['production_arterial'] = (parameters_arterial['production_arterial']
                                                           / 1000)
-            parameters_arterial['average_flow_arterial'] = (parameters_arterial['production_arterial']
-                                                            / lane_length)
             parameters_arterial['average_speed_arterial'] = (parameters_arterial['production_arterial']
                                                              / parameters_arterial['accumulation_arterial'])
-        parameters_arterial['lane_length'] = [lane_length] * len(parameters_arterial['accumulation_arterial'])
         art_parameters = pd.DataFrame(parameters_arterial)
         return art_parameters
 
@@ -1205,8 +935,8 @@ class TrafficAnalysis:
             travel_time = {f'travel_time_{order_id[ind]}': traj_tt,
                            f'start_time_{order_id[ind]}': [times_traj[traj][0] for traj in range(0, len(times_traj))],
                            f'time_step_{order_id[ind]}': period,
-                           'vehicle_type': self.traffic_counts['vehicle type'][f'vehicle_type_{edge_id[ind]}'],
-                           'ID': self.traffic_counts['vehicle type'][f'vehicle_index_{edge_id[ind]}']}
+                           'vehicle_type': self.traffic_counts['vehicle_type'][f'vehicle_type_{edge_id[ind]}'],
+                           'ID': self.traffic_counts['vehicle_type'][f'vehicle_index_{edge_id[ind]}']}
             travel_time = pd.DataFrame(travel_time)
             travel_time = travel_time[(travel_time[f'travel_time_{order_id[ind]}'] > 0) &
                                       (travel_time[f'start_time_{order_id[ind]}'] > 0)]
@@ -1229,42 +959,6 @@ class TrafficAnalysis:
             tt_arterial.append([travel_time, tt_avg])
         return tt_arterial
 
-    def travel_time_consecutive_sections(self, gate1, gate2, init_gate='_1', edge=0):
-        edge_id = list(self.traffic_counts['detectors']['index'].values)
-        counts = self.traffic_counts['counts'][edge]
-        times = counts[[f'times{init_gate}', f'times{gate1}', f'times{gate2}']].values
-        times_traj = [[0] * 3 for i in range(0, len(times[0][0]))]
-        period = [[0] * 2 for i in range(0, len(times[0][0]))]
-        cross = [[False] * 3 for i in range(0, len(times[0][0]))]
-        for step in range(0, len(times)):
-            for traj in range(0, len(times[0][0])):
-                if times[step][0][traj] and not cross[traj][0]:
-                    times_traj[traj][0] = times[step][0][traj]
-                    cross[traj][0] = True
-                if times[step][1][traj] and cross[traj][0]:
-                    times_traj[traj][1] = times[step][1][traj]
-                    period[traj][0] = step
-                    cross[traj][1] = True
-                if times[step][2][traj] and cross[traj][1]:
-                    times_traj[traj][2] = times[step][2][traj]
-                    period[traj][1] = step
-                    cross[traj][2] = True
-        tt_g1 = [times_traj[traj][1] - times_traj[traj][0] if cross[traj][1]
-                 else 0 for traj in range(0, len(times_traj))]
-        tt_g2 = [times_traj[traj][2] - times_traj[traj][1] if cross[traj][2]
-                 else 0 for traj in range(0, len(times_traj))]
-        travel_time = {f'tt_link1_{edge}': tt_g1,
-                       f'tt_link2_{edge}': tt_g2,
-                       f'start_time_{edge}': [times_traj[traj][0] for traj in range(0, len(times_traj))],
-                       f'time_step_link1_{edge}': [j[0] for i, j in enumerate(period)],
-                       f'time_step_link2_{edge}': [j[1] for i, j in enumerate(period)],
-                       'vehicle_type': self.traffic_counts['vehicle type'][f'vehicle_type_{edge_id[edge]}'],
-                       'ID': self.traffic_counts['vehicle type'][f'vehicle_index_{edge_id[edge]}']}
-        travel_time = pd.DataFrame(travel_time)
-        travel_time = travel_time.assign(tt_l1_seconds=round(travel_time[f'tt_link1_{edge}'] / 1000, 3))
-        travel_time = travel_time.assign(tt_l2_seconds=round(travel_time[f'tt_link2_{edge}'] / 1000, 3))
-        return travel_time
-
     def aggregation_step(self, step, adjusted=False):
         n_det = self.numberofdetectors
         edge_id = list(self.traffic_counts['detectors']['index'].values)
@@ -1272,11 +966,11 @@ class TrafficAnalysis:
         parameters = self.traffic_parameters
         if adjusted:
             parameters = self.traffic_parameters_adj
-        for ind, param in tenumerate(parameters):
+        for ind, param in enumerate(parameters):
             index = [0] * (len(param) // step + (len(param) % step > 0))
             index[0] = edge_id[ind]
             agg_df = {'index': index}
-            vehicle_type = self.traffic_counts['vehicle type'][f'vehicle_type_{edge_id[ind]}']
+            vehicle_type = self.traffic_counts['vehicle_type'][f'vehicle_type_{edge_id[ind]}']
             get_veh_type = collections.Counter(vehicle_type)
             for det in range(1, n_det + 1):
                 agg_df[f'density_{det}'] = []
@@ -1575,8 +1269,8 @@ class TrafficAnalysis:
         edge_id = list(self.traffic_counts['detectors']['index'].values)
         share = {'Car': [], 'Taxi': [], 'PTW': [], 'Bus': [], 'Bus_abs': []}
         for ind, ed in enumerate(edge_id):
-            total = len(self.traffic_counts['vehicle type'][f'vehicle_type_{edge_id[ind]}'])
-            cnt = collections.Counter(self.traffic_counts['vehicle type'][f'vehicle_type_{edge_id[ind]}'])
+            total = len(self.traffic_counts['vehicle_type'][f'vehicle_type_{edge_id[ind]}'])
+            cnt = collections.Counter(self.traffic_counts['vehicle_type'][f'vehicle_type_{edge_id[ind]}'])
             share['Car'].append(round(cnt['Car'] / total * 100, 1))
             share['Taxi'].append(round(cnt['Taxi'] / total * 100, 1))
             share['PTW'].append(round(cnt['Motorcycle'] / total * 100, 1))
@@ -1622,44 +1316,36 @@ def afd_estimates(list_arterial, arterial_names, specific_detector=0, aggregated
     fig, ax = plt.subplots(nrows=2, ncols=int(len(afd) / 2))
     for el, val in enumerate(afd):
         if el < 4:
-            ax[0, el].scatter(val.accumulation_arterial.iloc[:-1], val.average_speed_arterial.iloc[:-1], color='k', s=10)
+            ax[0, el].scatter(val.accumulation_arterial, val.average_speed_arterial, color='k', s=10)
             ax[0, el].set_title(arterial_names[el])
-            ax[0, el].set_xlim(0, max(val.accumulation_arterial.iloc[:-1])+100)
-            ax[0, el].set_ylim(0, 40)
-            ax[0, el].grid(True)
-            if el == 0:
-                ax[0, el - 4].set_ylabel('Average speed [km/h]')
+            ax[0, el].set_xlim(0, )
+            ax[0, el].set_ylim(0, )
             ax[0, el].set_xlabel('Accumulation [veh]')
+            ax[0, el].set_ylabel('Average speed [km/h]')
         else:
-            ax[1, el - 4].scatter(val.accumulation_arterial.iloc[:-1], val.average_speed_arterial.iloc[:-1], color='k', s=10)
+            ax[1, el - 4].scatter(val.accumulation_arterial, val.average_speed_arterial, color='k', s=10)
             ax[1, el - 4].set_title(arterial_names[el])
-            ax[1, el - 4].set_xlim(0, max(val.accumulation_arterial.iloc[:-1])+100)
-            ax[1, el - 4].set_ylim(0, 40)
-            if el-4 == 0:
-                ax[1, el - 4].set_ylabel('Average speed [km/h]')
+            ax[1, el - 4].set_xlim(0, )
+            ax[1, el - 4].set_ylim(0, )
             ax[1, el - 4].set_xlabel('Accumulation [veh]')
-            ax[1, el-4].grid(True)
+            ax[1, el - 4].set_ylabel('Average speed [km/h]')
     plt.tight_layout(rect=[0, 0.03, 1, 0.90])
     fig, ax = plt.subplots(nrows=2, ncols=int(len(afd) / 2))
     for el, val in enumerate(afd):
         if el < 4:
             ax[0, el].scatter(val.accumulation_arterial, val.production_arterial, color='k', s=10)
             ax[0, el].set_title(arterial_names[el])
-            ax[0, el].set_xlim(0, max(val.accumulation_arterial.iloc[:-1])+100)
-            ax[0, el].set_ylim(0, max(val.production_arterial.iloc[:-1])+1000)
+            ax[0, el].set_xlim(0, )
+            ax[0, el].set_ylim(0, )
             ax[0, el].set_xlabel('Accumulation [veh]')
-            if el == 0:
-                ax[0, el].set_ylabel('Production [veh km/h]')
-            ax[0, el].grid(True)
+            ax[0, el].set_ylabel('Production [veh km/h]')
         else:
             ax[1, el - 4].scatter(val.accumulation_arterial, val.production_arterial, color='k', s=10)
             ax[1, el - 4].set_title(arterial_names[el])
-            ax[1, el - 4].set_xlim(0, max(val.accumulation_arterial.iloc[:-1])+100)
-            ax[1, el - 4].set_ylim(0, max(val.production_arterial.iloc[:-1])+1000)
+            ax[1, el - 4].set_xlim(0, )
+            ax[1, el - 4].set_ylim(0, )
             ax[1, el - 4].set_xlabel('Accumulation [veh]')
-            if el-4 == 0:
-                ax[1, el-4].set_ylabel('Production [veh km/h]')
-            ax[1, el - 4].grid(True)
+            ax[1, el - 4].set_ylabel('Production [veh km/h]')
     plt.tight_layout(rect=[0, 0.03, 1, 0.90])
     return afd
 
@@ -1729,36 +1415,6 @@ def tt_art_all(list_arterials, art_names, plot_tt=False, plot_tt_art=False, colu
             ax.grid(True)
             ax.set_xticks([])
     return tt_art
-
-
-def analysis_test_multimodal(ta_obj1, ta_obj2, modes_comp, percentile=95):
-    n_det = ta_obj1.numberofdetectors
-    dist = ta_obj1.loop_distance
-    freq = ta_obj1.frequency
-    diff_param = []
-    parameters_1 = ta_obj1.traffic_parameters
-    parameters_2 = ta_obj2.traffic_parameters
-    for ind, param in tenumerate(parameters_1):
-        dict_diff = {'edge_id': [param['index'][0]] * len(param)}
-        for d in range(1, n_det + 1):
-            dict_diff[f'delta_k{d}'] = (param[f'density_{d}'] - parameters_2[ind][f'density_{d}']) / \
-                                       (param[f'vehicles_{d}'] - parameters_2[ind][f'vehicles_{d}'])
-            # *dist/1000  # overall unit seconds (VHT)
-            dict_diff[f'delta_q{d}'] = (param[f'flow_{d}'] - parameters_2[ind][f'flow_{d}']) / \
-                                       (param[f'vehicles_{d}'] - parameters_2[ind][f'vehicles_{d}'])
-            # *freq/3600 # overall unit meters (VKT)
-            dict_diff[f'veh1_{d}'] = param[f'vehicles_{d}']
-            dict_diff[f'frac_veh_{d}'] = parameters_2[ind][f'vehicles_{d}'] / param[f'vehicles_{d}']
-            dict_diff[f'p{percentile}_k{d}'] = [np.percentile(param[f'density_{d}'], percentile)] * len(param)
-            dict_diff[f'p{percentile}_q{d}'] = [np.percentile(param[f'flow_{d}'], percentile)] * len(param)
-            dict_diff[f'max_k{d}'] = [max(param[f'density_{d}'])] * len(param)
-            dict_diff[f'max_q{d}'] = [max(param[f'flow_{d}'])] * len(param)
-        dict_df = pd.DataFrame(dict_diff)
-        dict_df.insert(1, 'modes_comparison', [modes_comp] * len(param))
-        dict_df = dict_df.fillna(0)
-        diff_param.append(dict_df)
-    df_tot = pd.concat(diff_param, axis=0, ignore_index=True)
-    return diff_param, df_tot
 
 
 # def arterial_fundamental_diagram(parameters_list):

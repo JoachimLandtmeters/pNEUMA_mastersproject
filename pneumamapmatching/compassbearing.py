@@ -1,6 +1,8 @@
 # LICENSE: public domain
 import math
 from shapely.geometry import Point
+
+
 def calculate_initial_compass_bearing(pointA, pointB):
     """
     Calculates the bearing between two points.
@@ -16,11 +18,12 @@ def calculate_initial_compass_bearing(pointA, pointB):
         second point. Latitude and longitude must be in decimal degrees
 
     :Returns:
-      The bearing in degrees
+      The bearing in degrees (NESW clockwise)
 
     :Returns Type:
       float
     """
+
     if (type(pointA) != tuple) or (type(pointB) != tuple):
         raise TypeError("Only tuples are supported as arguments")
 
@@ -30,8 +33,7 @@ def calculate_initial_compass_bearing(pointA, pointB):
     diffLong = math.radians(pointB[1] - pointA[1])
 
     x = math.sin(diffLong) * math.cos(lat2)
-    y = math.cos(lat1) * math.sin(lat2) - (math.sin(lat1)
-            * math.cos(lat2) * math.cos(diffLong))
+    y = math.cos(lat1) * math.sin(lat2) - (math.sin(lat1) * math.cos(lat2) * math.cos(diffLong))
 
     initial_bearing = math.atan2(x, y)
 
@@ -43,19 +45,33 @@ def calculate_initial_compass_bearing(pointA, pointB):
 
     return compass_bearing
 
-def get_coordinates(bearing, point, distance):
+
+def get_coordinates(bearing, point, distance, lonlat=True):
+    """
+
+    :param bearing:
+    :param point: lon-lat or x-y coordinates!!!
+    :param distance:
+    :param latlon:
+    :return:
+    """
     # Bearing clockwise from north to east
-    bearing=math.radians(bearing)
-    lat=math.radians(point[0])
-    dx=distance*math.sin(bearing)
-    dy=distance*math.cos(bearing)
-    polar=110540 # Polar circumference for one degree latitude for WGS-84 ellipsoid
-    equatorial=111320 # Equatorial circumference for one degree longitude for WGS-84 ellipsoid
-    d_lon=dx/(equatorial*math.cos(lat))
-    d_lat=dy/polar
+    bearing = math.radians(bearing)
+    dx = distance * math.sin(bearing)
+    dy = distance * math.cos(bearing)
+    if lonlat:
+        polar = 110540  # Polar circumference for one degree latitude for WGS-84 ellipsoid
+        equatorial = 111320  # Equatorial circumference for one degree longitude for WGS-84 ellipsoid
+        lat = math.radians(point[1])
 
-    lon2=point[1]+d_lon
-    lat2=point[0]+d_lat
+        d_lon = dx / (equatorial * math.cos(lat))
+        d_lat = dy / polar
 
-    new_point=Point(lon2,lat2)
+        lon2 = point[0] + d_lon
+        lat2 = point[1] + d_lat
+        new_point = Point(lon2, lat2)
+    else:
+        x2 = point[0] + dx
+        y2 = point[1] + dy
+        new_point = Point(x2, y2)
     return new_point
