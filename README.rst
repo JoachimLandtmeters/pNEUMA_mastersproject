@@ -46,6 +46,14 @@ Following packages will be needed:
 - tqdm
 - pyproj
 
+
+pacakges currently imported in some modules but not very actively used, WIP:
+- scipy
+- sklearn
+- rtree
+- pylab
+- bokeh
+
 Documentation
 =============
 

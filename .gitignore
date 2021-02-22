@@ -6,6 +6,7 @@ tox.ini
 .cookiecutterrc
 .bumpversion*
 .appveyor*
+setup.py
 tests
 ci
 
