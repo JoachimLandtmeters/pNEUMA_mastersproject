@@ -28,6 +28,18 @@ import pickle
 import json
 
 
+def create_bbox(gdf, latlon=True):
+    """
+    Create a bounding box with the values ordered accordingly to use as input afterwards
+    :param gdf: geodataframe with coordinate columns
+    :return: bbox: ordered North, South, East, West (lat, lat, lon, lon)
+    """
+    c1, c2 = None, None
+    if latlon:
+        assert {'lat', 'lon'}.issubset(set(gdf.columns))
+        c1, c2 = 'lat', 'lon'
+
+
 class Box:
 
     def __init__(self, bbox, epsg_proj=None):
@@ -107,7 +119,7 @@ class CreateNetwork:
         self.network_edges = pd.DataFrame()
         self.network_nodes = pd.DataFrame()
         self.used_network = pd.DataFrame()
-        self.mm_id = 0
+        self.mm_id = {}
         self.node_tags = node_tags(self.graph_raw, tag='highway')
 
     def network_dfs(self):
@@ -136,13 +148,13 @@ class CreateNetwork:
         nearest = ox.get_nearest_edges(self.graph_xy, self.node_tags.x.to_list(), self.node_tags.y.to_list(),
                                        method='kdtree', dist=1)
         n1, n2, _ = zip(*nearest)
-        test_b1 = network_edges[['_id','edge', 'bearing']][network_edges.edge.isin(list(zip(n1, n2)))].values
-        test_b2 = network_edges[['_id','edge', 'bearing']][network_edges.edge.isin(list(zip(n2, n1)))].values
+        test_b1 = network_edges[['_id', 'edge', 'bearing']][network_edges.edge.isin(list(zip(n1, n2)))].values
+        test_b2 = network_edges[['_id', 'edge', 'bearing']][network_edges.edge.isin(list(zip(n2, n1)))].values
         self.node_tags['edge'] = [ij for ij in zip(n1, n2)]
         self.node_tags.reset_index(inplace=True)
         self.node_tags = self.node_tags.merge(self.network_edges[['edge', 'bearing']], on='edge',
-                                              suffixes=('','_edge'))
-        diff_b = abs(self.node_tags['bearing']-self.node_tags['bearing_edge'])
+                                              suffixes=('', '_edge'))
+        diff_b = abs(self.node_tags['bearing'] - self.node_tags['bearing_edge'])
         for i, j in diff_b.iteritems():
             if (j > 45) and not self.node_tags.junction[i]:
                 self.node_tags.at[i, 'edge'] = (self.node_tags.at[i, 'edge'][1], self.node_tags.at[i, 'edge'][0])
@@ -228,8 +240,8 @@ class CreateNetwork:
     def add_used_network(self, used_network):
         self.used_network = used_network
 
-    def add_mapmatch_tag(self, tag):
-        self.mm_id = tag
+    def add_mapmatch_tag(self, group_id, tag):
+        self.mm_id[group_id] = tag
 
     def save_graph_to_shp(self, path='data/shapefiles', latlon=True):
         g = self.graph_xy
@@ -359,6 +371,14 @@ def project_point(point, lonlat=False, epsg_proj=None, hemisphere='north', retur
             return cd, epsg_proj
         else:
             return cd
+
+
+def project_improved(x_arr, y_arr, from_crs=crs_pneuma, to_crs=crs_pneuma_proj):
+    transformer = pyproj.Transformer.from_crs(from_crs, to_crs, always_xy=True)
+    xx, yy = transformer.transform(x_arr, y_arr)
+    return xx, yy
+
+
 
 
 def project_gdf(gdf, epsg_proj=None):

@@ -14,20 +14,18 @@ Note: Linestring object can follow curves, not just straight lines between begin
 # - multiple detectors at once
 
 import pneumapackage.compassbearing as cpb
-from pneumapackage.network import CreateNetwork
-from pneumapackage.__init__ import path_results, results_folder, path_data
+from pneumapackage.__init__ import path_results
 from pneumapackage.settings import *
 
 import geopandas as gpd
 import pandas as pd
-import numpy as np
 import osmnx as ox
 from pyproj import Proj
 from shapely.geometry import Point, LineString
-from leuvenmapmatching.util.dist_latlon import distance_point_to_segment
-from collections import Counter
+import leuvenmapmatching.util.dist_euclidean as distxy
 
-import pickle
+from pathlib import Path
+import os
 
 
 # Single implementation
@@ -39,47 +37,74 @@ import pickle
 
 class Detectors:
 
-    def __init__(self, gdf_netw, len_det, dfi, ld, n_det, double_loops, lonlat=False, gdf_special=None):
-        # researched area (bounding box)
-        # self.edges_xy = ox.project_gdf(gdf_netw)  # used network projected to xy coordinates (utm)
-        self.used_network = gdf_netw
+    def __init__(self, gdf_netw, n_det, length_detector, dfi, double_loops, lonlat=False, gdf_special=None):
+        self.network = gdf_netw
+        self.n_det = n_det
         self.dfi = dfi
-        self.len_det = len_det
-        self.ld = ld
-        self.ndet = n_det
-        self.det_loc = make_double_detector(self.used_network, self.dfi,
-                                            n_det=self.ndet, loop_distance=self.ld, make_double_loops=double_loops)
-        self.det_loc_latlon = get_xy_to_crs_double_loops(self.det_loc, n_det=self.ndet, double_loops=double_loops,
+        self.len_det = length_detector
+        if type(double_loops) in (int, float):
+            self.double_loops = True
+            self.loop_width = double_loops
+        else:
+            self.double_loops = False
+            self.loop_width = 0
+        self.det_loc = make_double_detector(self.network, self.dfi, n_det=self.n_det, loop_width=self.loop_width,
+                                            make_double_loops=self.double_loops)
+        self.det_loc_latlon = get_xy_to_crs_double_loops(self.det_loc, n_det=self.n_det, double_loops=self.double_loops,
                                                          lonlat=lonlat)
-        self.det_edges = make_detector_edges(self.det_loc_latlon, len_det, n_det=self.ndet,
-                                             double_loops=double_loops, lonlat=lonlat)
-        self.features = edge_features(gdf_special, len_det, lonlat=lonlat)
+        self.det_edges = make_detector_edges(self.det_loc_latlon, self.len_det, double_loops=self.double_loops)
+        self.features = edge_features(gdf_special, length_detector, lonlat=lonlat)
         self.det_edges_all = self.det_edges[0]
-        self.det_sel = {}
+        self.det_edges_all_ts = {}
+        self.det_selection = {}
+
+    def info(self):
+        det_info = {'number_detectors': self.n_det, 'distance_from_intersection': self.dfi,
+                    'length_detector': self.len_det, 'double_loops': self.double_loops, 'loop_width': self.loop_width}
+        return det_info
 
     def detector_selection(self, index_list):
         det_sel = self.det_edges_all[self.det_edges_all['_id'].isin(index_list)]
-        self.det_sel = det_sel
+        self.det_selection = det_sel
         return det_sel
 
-    def detector_to_shapefile(self, det_sel=False, double_loops=False, filename=None, folder=path_data):
+    def detector_projected(self):
+        det_loc = self.det_loc
+        tmp_det = pd.merge(det_loc, self.network[['_id', 'x1', 'y1', 'x2', 'y2']], how='left', on='_id')
+        for ind in range(1, self.n_det + 1):
+            tmp_det[f'crd{ind}'] = [t.coords[0] for t in tmp_det[f'detector {ind}']]
+            det_proj = tmp_det.apply(help_det_proj, column_name=f'crd{ind}', axis=1)
+            det_loc[f'proj_det{ind}'] = det_proj
+        self.det_loc = det_loc
+
+    def features_projected(self):
+        ft = self.features
+        ft = ft.reset_index()
+        tmp_ft = pd.merge(ft, self.network[['_id', 'x1', 'y1', 'x2', 'y2']], how='left', on='_id')
+        ft_proj = tmp_ft.apply(help_det_proj, column_name='xy', axis=1)
+        ft['proj_feature'] = ft_proj
+        ft.set_index(['_id', 'index'], inplace=True)
+        self.features = ft
+
+    def detector_to_shapefile(self, det_sel=False, filename=None, folder=path_results):
         detector = self.det_edges_all
         fn = ''
         if filename is not None:
             fn = filename
         if det_sel:
-            detector = self.det_sel
-        for det in range(1, self.ndet + 1):
+            detector = self.det_selection
+        Path(folder + "/shapefiles").mkdir(parents=True, exist_ok=True)
+        for det in range(1, self.n_det + 1):
             det_gdf = gpd.GeoDataFrame(detector[['_id', 'n1', 'n2']], geometry=detector[f'det_edge_{det}'])
             det_gdf_shp = det_gdf.copy()
             det_gdf_shp.crs = 'epsg:4326'
-            shp_fn = f'{folder}/shapefiles/detector_{det}{fn}'
-            det_gdf_shp.to_file(filename=shp_fn, folder=folder + '/shapefiles')
-            if double_loops:
+            shp_fn = os.path.join(folder, 'shapefiles', f'detector_{det}{fn}')
+            det_gdf_shp.to_file(filename=shp_fn)
+            if self.double_loops:
                 det_bis_gdf = gpd.GeoDataFrame(detector[['_id', 'n1', 'n2']], geometry=detector[f'det_edge_{det}bis'])
                 det_bis_gdf_shp = det_bis_gdf.copy()
                 det_bis_gdf_shp.crs = 'epsg:4326'
-                shp_fnbis = f'{folder}/shapefiles/detector_{det}bis{fn}'
+                shp_fnbis = os.path.join(folder, 'shapefiles', f'detector_{det}bis{fn}')
                 det_bis_gdf_shp.to_file(filename=shp_fnbis)
 
 
@@ -130,14 +155,11 @@ def make_detector(gdf, distance, relative=False, reverse=False):
 # make_double_loops = construct double loops by placing an extra detector right behind every initial detector
 
 
-def make_double_detector(gdf, distance, n_det=1, make_double_loops=True, loop_distance=1, gdf_special=None):
+def make_double_detector(gdf, distance, n_det=1, make_double_loops=True, loop_width=1):
     if distance < 0:
         raise Exception('distance should be positive. The value was: {}'.format(distance))
     if gdf.crs.to_epsg() == 4326:
         gdf = ox.project_gdf(gdf)  # project unprojected geodataframe of network edges
-    if gdf_special is not None:
-        assert isinstance(gdf_special, pd.DataFrame)
-        gdf = gdf.merge(gdf_special)
     name = []
     id_b = []
     det_bearing = []
@@ -154,13 +176,13 @@ def make_double_detector(gdf, distance, n_det=1, make_double_loops=True, loop_di
             if make_double_loops:
                 det_loc_edge_double = [0] * n_det
                 det_help = [0] * n_det * 2
-            if gdf['length'][i] > (distance * 2) and gdf['length'][i] > loop_distance:
+            if gdf['length'][i] > (distance * 2) and gdf['length'][i] > loop_width:
                 # assure order of detectors on edge (begin not after end)
                 det_loc_edge[0] = gdf.loc[i, 'geometry'].interpolate(distance)  # Begin detector, first in list
                 det_help[0] = gdf.loc[i, 'geometry'].interpolate(distance + dist_help)
                 if make_double_loops:
-                    det_loc_edge_double[0] = gdf.loc[i, 'geometry'].interpolate(distance + loop_distance)
-                    det_help[n_det] = gdf.loc[i, 'geometry'].interpolate(distance + loop_distance + dist_help)
+                    det_loc_edge_double[0] = gdf.loc[i, 'geometry'].interpolate(distance + loop_width)
+                    det_help[n_det] = gdf.loc[i, 'geometry'].interpolate(distance + loop_width + dist_help)
                 inter_length = (gdf['length'][i] - distance * 2)
                 prev_dist = [distance]
                 relative_distance = 1 / (n_det - 1)
@@ -171,24 +193,24 @@ def make_double_detector(gdf, distance, n_det=1, make_double_loops=True, loop_di
                     det_loc_edge[ind] = gdf.loc[i, 'geometry'].interpolate(new_distance)
                     det_help[ind] = gdf.loc[i, 'geometry'].interpolate(new_distance + dist_help)
                     if make_double_loops:
-                        inter_length = (gdf['length'][i] - (distance + loop_distance) * 2)
+                        inter_length = (gdf['length'][i] - (distance + loop_width) * 2)
                         inter_det_length = relative_distance * inter_length
-                        if 0.5 * loop_distance < inter_det_length:  # only one loop distance needed, 2 is too strict
-                            new_distance = (inter_det_length * ind) + distance + loop_distance
-                            det_loc_edge[ind] = gdf.loc[i, 'geometry'].interpolate(new_distance - 0.5 * loop_distance)
+                        if 0.5 * loop_width < inter_det_length:  # only one loop distance needed, 2 is too strict
+                            new_distance = (inter_det_length * ind) + distance + loop_width
+                            det_loc_edge[ind] = gdf.loc[i, 'geometry'].interpolate(new_distance - 0.5 * loop_width)
                             det_help[ind] = gdf.loc[i, 'geometry'].interpolate(
-                                new_distance - 0.5 * loop_distance + dist_help)
+                                new_distance - 0.5 * loop_width + dist_help)
                             det_loc_edge_double[ind] = gdf.loc[i, 'geometry'].interpolate(new_distance +
-                                                                                          0.5 * loop_distance)
+                                                                                          0.5 * loop_width)
                             det_help[n_det + ind] = gdf.loc[i, 'geometry'].interpolate(new_distance
-                                                                                       + 0.5 * loop_distance + dist_help)
+                                                                                       + 0.5 * loop_width + dist_help)
                             if len(det_loc_edge) - ind == 1:  # Last detector
                                 det_loc_edge[ind] = gdf.loc[i, 'geometry'].interpolate(new_distance)
                                 det_help[ind] = gdf.loc[i, 'geometry'].interpolate(new_distance + dist_help)
                                 det_loc_edge_double[ind] = gdf.loc[i, 'geometry'].interpolate(
-                                    new_distance + loop_distance)
+                                    new_distance + loop_width)
                                 det_help[n_det + ind] = gdf.loc[i, 'geometry'].interpolate(new_distance
-                                                                                           + loop_distance + dist_help)
+                                                                                           + loop_width + dist_help)
                         else:
                             # Place identical detectors (keep the number of detectors to have a valid dataframe)
                             # rel=(prev_dist[ind-1]+inter_det_length*0.4)/gdf['length'][i]
@@ -196,24 +218,24 @@ def make_double_detector(gdf, distance, n_det=1, make_double_loops=True, loop_di
                             # det_help[n_det+ind - 1] = gdf.loc[i, 'geom'].\
                             # interpolate(rel+dist_help_rel, normalized=True)
                             tag = True
-                            rel = 0.5 * gdf['length'][i] - (loop_distance * 0.5)  # Place a detector in middle of link
+                            rel = 0.5 * gdf['length'][i] - (loop_width * 0.5)  # Place a detector in middle of link
                             det_loc_edge[ind] = gdf.loc[i, 'geometry'].interpolate(rel)
-                            det_loc_edge_double[ind] = gdf.loc[i, 'geometry'].interpolate(rel + loop_distance)
+                            det_loc_edge_double[ind] = gdf.loc[i, 'geometry'].interpolate(rel + loop_width)
                             det_help[ind] = gdf.loc[i, 'geometry']. \
                                 interpolate(rel + dist_help)
                             det_help[n_det + ind] = gdf.loc[i, 'geometry']. \
-                                interpolate(rel + loop_distance + dist_help)
+                                interpolate(rel + loop_width + dist_help)
                     prev_dist.append(new_distance)
                 if make_double_loops:  # Place double loops for end detector on edge
                     if tag:
-                        dist_special = 0.5 * gdf['length'][i] - (loop_distance * 0.5)
+                        dist_special = 0.5 * gdf['length'][i] - (loop_width * 0.5)
                         det_loc_edge[0] = gdf.loc[i, 'geometry'].interpolate(dist_special)
                         det_help[0] = gdf.loc[i, 'geometry'].interpolate(dist_special + dist_help)
-                        det_loc_edge_double[0] = gdf.loc[i, 'geometry'].interpolate(dist_special + loop_distance)
-                        det_help[n_det] = gdf.loc[i, 'geometry'].interpolate(dist_special + loop_distance + dist_help)
-                        new_loop_distance.append(loop_distance)
+                        det_loc_edge_double[0] = gdf.loc[i, 'geometry'].interpolate(dist_special + loop_width)
+                        det_help[n_det] = gdf.loc[i, 'geometry'].interpolate(dist_special + loop_width + dist_help)
+                        new_loop_distance.append(loop_width)
                     else:
-                        new_loop_distance.append(loop_distance)
+                        new_loop_distance.append(loop_width)
                     name_double.append(det_loc_edge_double)
                 det_bearing.append(det_help)
                 name.append(det_loc_edge)
@@ -234,15 +256,15 @@ def make_double_detector(gdf, distance, n_det=1, make_double_loops=True, loop_di
                     # interpolate(rel_dist + dist_help_rel, normalized=True)
                     prev_dist.append(new_distance)
                 if make_double_loops:
-                    if gdf['length'][i] > (loop_distance + 2 * dist_help):
-                        dist_special = 0.5 * gdf['length'][i] - (loop_distance * 0.5)
+                    if gdf['length'][i] > (loop_width + 2 * dist_help):
+                        dist_special = 0.5 * gdf['length'][i] - (loop_width * 0.5)
                         for ind in range(0, len(det_loc_edge)):
                             det_loc_edge[ind] = gdf.loc[i, 'geometry'].interpolate(dist_special)
                             det_help[ind] = gdf.loc[i, 'geometry'].interpolate(dist_special + dist_help)
-                            det_loc_edge_double[ind] = gdf.loc[i, 'geometry'].interpolate(dist_special + loop_distance)
+                            det_loc_edge_double[ind] = gdf.loc[i, 'geometry'].interpolate(dist_special + loop_width)
                             det_help[n_det + ind] = gdf.loc[i, 'geometry'].interpolate(dist_special +
-                                                                                       loop_distance + dist_help)
-                        new_loop_distance.append(loop_distance)
+                                                                                       loop_width + dist_help)
+                        new_loop_distance.append(loop_width)
                     else:
                         dist_special = 0.5
                         rel_loop = 0.1
@@ -271,11 +293,11 @@ def make_double_detector(gdf, distance, n_det=1, make_double_loops=True, loop_di
                 d = gdf.loc[i, 'geometry'].interpolate(distance)
                 det_help[0] = gdf.loc[i, 'geometry'].interpolate(distance + dist_help)
                 if make_double_loops:
-                    if gdf['length'][i] - 2 * distance > loop_distance:
-                        d_2 = gdf.loc[i, 'geometry'].interpolate(distance + loop_distance)
-                        det_help_double = gdf.loc[i, 'geometry'].interpolate(distance + loop_distance + dist_help)
+                    if gdf['length'][i] - 2 * distance > loop_width:
+                        d_2 = gdf.loc[i, 'geometry'].interpolate(distance + loop_width)
+                        det_help_double = gdf.loc[i, 'geometry'].interpolate(distance + loop_width + dist_help)
                         name_double.append(d_2)
-                        new_loop_distance.append(loop_distance)
+                        new_loop_distance.append(loop_width)
                     else:
                         rel = gdf['length'][i] - distance
                         d_2 = gdf.loc[i, 'geometry'].interpolate(rel)
@@ -289,12 +311,12 @@ def make_double_detector(gdf, distance, n_det=1, make_double_loops=True, loop_di
                 d = gdf.loc[i, 'geometry'].interpolate(0.5, normalized=True)
                 det_help[0] = gdf.loc[i, 'geometry'].interpolate(0.5 + dist_help_rel, normalized=True)
                 if make_double_loops:
-                    if gdf['length'][i] * 0.5 > loop_distance:
-                        rel = loop_distance / gdf['length'][i] + 0.5
+                    if gdf['length'][i] * 0.5 > loop_width:
+                        rel = loop_width / gdf['length'][i] + 0.5
                         d_2 = gdf.loc[i, 'geometry'].interpolate(rel, normalized=True)
                         det_help_double = gdf.loc[i, 'geometry'].interpolate(rel + dist_help_rel, normalized=True)
                         name_double.append(d_2)
-                        new_loop_distance.append(loop_distance)
+                        new_loop_distance.append(loop_width)
                     else:
                         d_2 = gdf.loc[i, 'geometry'].interpolate(0.6, normalized=True)
                         det_help_double = gdf.loc[i, 'geometry'].interpolate(0.6 + dist_help_rel, normalized=True)
@@ -414,16 +436,23 @@ def get_xy_to_crs_double_loops(gdf, n_det=1, double_loops=True, lonlat=False):
             gdf_ind = gpd.GeoDataFrame(gdf_ind, crs='WGS84', geometry=geom)
             individ_gdf.append(gdf_ind)
     gdf = gdf.drop(['geometry'], axis=1)
-    geom = [Point(xy) for xy in gdf.detector_1]
-    gdf = gpd.GeoDataFrame(gdf, crs='WGS84', geometry=geom)
+    if lonlat:
+        gdf.attrs['crs'] = crs_pneuma
+        gdf.attrs['lonlat'] = True
+    else:
+        gdf.attrs['crs'] = crs_pneuma_proj
+        gdf.attrs['lonlat'] = False
+    gdf.attrs['n_det'] = n_det
     new_gdf.append(gdf)
     new_gdf.append(individ_gdf)
     return new_gdf
 
 
-def make_detector_edges(gdf, distance, n_det=1, double_loops=True, b_begin=True, b_end=False, lonlat=False):
+def make_detector_edges(gdf, distance, double_loops=False, b_begin=True, b_end=False):
     if type(gdf) is list:
         gdf = gdf[0]  # Selecting the dataframe with all detectors together (subject to output of previous functions)
+    n_det = gdf.attrs['n_det']
+    lonlat = gdf.attrs['lonlat']
     gdf_edges = []
     gdf_edges_all = gdf[['_id', 'n1', 'n2', 'highway', 'lanes', 'length']]
     if double_loops:
@@ -470,9 +499,13 @@ def make_detector_edges(gdf, distance, n_det=1, double_loops=True, b_begin=True,
             gdf_edge = gdf[['n1', 'n2']]
             gdf_edge_bis = gpd.GeoDataFrame(gdf_edge, geometry=f)
             gdf_edges.append(gdf_edge_bis)
+        gdf_edges_all.attrs['crs'] = gdf.attrs['crs']
+        gdf_edges_all.attrs['lonlat'] = gdf.attrs['lonlat']
+        gdf_edges_all.attrs['n_det'] = gdf.attrs['n_det']
         gdf_edges[0] = gdf_edges_all
     g = [tuple(xy) for xy in zip(gdf_edges_all['n1'], gdf_edges_all['n2'])]
     gdf_edges[0].insert(len(gdf_edges_all.columns), 'edge', g)
+    print(gdf_edges_all.attrs)
     return gdf_edges
 
 
@@ -498,12 +531,24 @@ def edge_features(gdf_special, distance, lonlat=False, select_traffic_signals=Tr
         point2 = [cpb.get_coordinates(ft2[i], df_ft.loc[i], distance, lonlat=lonlat) for i in gdf_special.index]
         ft_geom = [LineString(xy) for xy in zip(point1, point2)]
         gdf_special = gdf_special.drop('geometry', axis=1)
+
         df_features = gpd.GeoDataFrame(gdf_special, crs=crs, geometry=ft_geom)
         if select_traffic_signals:
             df_features = df_features[(df_features['feature'] == 'traffic_signals')
                                       | (df_features['crossing'] == 'traffic_signals') |
                                       (df_features['traffic_signals'].isin(['signal', 'traffic_lights']))]
-            df_features['det_signal'] = df_features['geometry']
+            df_features['det_signal1'] = df_features['geometry']
+        df_features.attrs['lonlat'] = lonlat
+        df_features.attrs['crs'] = crs
+        df_features.attrs['n_det'] = 1
     else:
         df_features = []
     return df_features
+
+
+def help_det_proj(row, column_name):
+    p = row[column_name]
+    e1 = (row['x1'], row['y1'])
+    e2 = (row['x2'], row['y2'])
+    _, t = distxy.project(s1=e1, s2=e2, p=p)
+    return t

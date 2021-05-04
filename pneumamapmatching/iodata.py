@@ -18,24 +18,27 @@ remove original file and rename new file to old filename
 This is a bit of a hack but no simple feature of pandas or pytables is known to me that attains the same goal
 """
 
-from pneumapackage.settings import init_name, hdf_name, crs_pneuma
+from pneumapackage.settings import init_name, hdf_name, crs_pneuma, datasets_name
 from pneumapackage.__init__ import path_data, write_pickle, read_pickle
 from pneumapackage.logger import log
-from pneumapackage.network import project_point
+from pneumapackage.network import project_improved
 import pneumapackage.compassbearing as cpb
 
 import os
 import sys
 from pathlib import Path
 import time
+import datetime
 
 import pandas as pd
 import h5py
 import csv
 from tqdm import tqdm
+from tqdm.contrib import tenumerate
 import pickle
+import numpy as np
 
-maxInt = sys.maxsize  # to read problematic csv files with various numbers of columns
+maxInt = min(sys.maxsize, 2147483646)
 start = time.time()
 
 
@@ -48,31 +51,101 @@ start = time.time()
 # Step 2: When adding specific data a group is added with the corresponding metadata and numeric values
 
 
+def get_data_dict(path=path_data, name=datasets_name, reset=False):
+    if not reset:
+        try:
+            data_dict = read_pickle(name, path=path)
+            return data_dict
+        except FileNotFoundError:
+            data_dict = {}
+            write_pickle(data_dict, name, path=path)
+            return data_dict
+    else:
+        data_dict = {}
+        write_pickle(data_dict, name, path=path)
+        return data_dict
+
+
+def create_group_id(csv_filename):
+    csv_filename = csv_filename.rsplit(".")[0].rsplit("_")
+    key_name = f"{csv_filename[0].replace('2018', '')}_{csv_filename[1]}_{csv_filename[2]}"
+    return key_name
+
+
+def group_id_from_path(data_path):
+    if sys.platform == "win32":
+        key_name = data_path.rsplit("\\")[-1]
+    else:
+        key_name = data_path.rsplit("/")[-1]
+    key_name = create_group_id(key_name)
+    return key_name
+
+
+def add_data_path(data_path=None, name=datasets_name, path=path_data):
+    if data_path is None:
+        data_path = input('Give data path: ').strip('"').strip("'")
+    data_dict = get_data_dict(name=name)
+    key_name = group_id_from_path(data_path)
+    data_dict[key_name] = data_path
+    write_pickle(data_dict, datasets_name, path=path)
+    return key_name
+
+
+def initialize_data_paths(data_directory_path=None):
+    if data_directory_path is None:
+        data_directory_path = input('Give data path: ').strip('"').strip("'")
+    filenames = []
+    for r, d, f in os.walk(data_directory_path):
+        for file in f:
+            if not file.startswith('._'):
+                filenames.append(file)
+    data_paths = []
+    for fn in filenames:
+        data_paths.append(os.path.join(data_directory_path, fn))
+    for dp in data_paths:
+        _ = add_data_path(dp)
+    return get_data_dict()
+
+
 def init_hdf(path=path_data, name=hdf_name, reset=False):
-    hdf_fn = path + name
+    hdf_fn = os.path.join(path, name)
     if not os.path.exists(hdf_fn) or reset:
         with h5py.File(hdf_fn, 'w') as s:
             s.create_group('info')
             s['info'].attrs['pNEUMA'] = 'store pNEUMA data in HDF5'
             s['info'].attrs['crs'] = crs_pneuma
+            dt = datetime.datetime.now()
+            tag = dt.strftime('%Y/%m/%d %H:%M')
+            s['info'].attrs['created'] = tag
+        log(f'[HDF5] database created ({tag})', 20)
     return hdf_fn
 
 
-def get_from_hdf(hdf, key_id=None, key_tr=None, result='all', select_id=None, select_all=None):
+def get_from_hdf(hdf, key_id=None, key_tr=None, select_id=None, select_tr=None, result='all'):
     """
-    Get data from hdf5
+    Get data from HDF5 database
 
-    :param hdf: path to hdf5 file
-    :param key_id: group with dataframe of all track ids
-    :param key_tr: group with dataframe of all trajectory points
-    :return: df with all ids, concatenated dataframe of all trajectories,  list of dataframes with trajectories
+    Parameters
+    ----------
+    hdf: path to hdf5 file
+    key_id: group with table of all track ids
+    key_tr: group with table of all individual trajectories
+    select_id:
+    select_tr:
+    result:
+
+    Returns
+    ----------
+    return: df with all ids, concatenated dataframe of all trajectories,  list of dataframes with trajectories
     """
-    assert result in ['all', 'ids', 'df_all', 'list']
+    result_options = ['all', 'ids', 'df_all', 'list']
+    if result not in result_options:
+        raise KeyError(f'result parameter should be in {result_options}, current value = {result}')
     df_id, df_all, ldf = None, None, None
     if key_id is not None:
         df_id = pd.read_hdf(hdf, key=key_id, mode='r', where=select_id)
     if key_tr is not None:
-        df_all = pd.read_hdf(hdf, key=key_tr, mode='r', where=select_all)
+        df_all = pd.read_hdf(hdf, key=key_tr, mode='r', where=select_tr)
         ldf = [gr for _, gr in df_all.groupby('track_id')]
         _ = [gr.reset_index(inplace=True, drop=True) for gr in ldf]
     if result == 'all':
@@ -85,18 +158,19 @@ def get_from_hdf(hdf, key_id=None, key_tr=None, result='all', select_id=None, se
         return ldf
 
 
-def get_path_dict(path=path_data, name='path_dict', reset=False):
+def get_path_dict(path=path_data, reset=False):
+    name = 'path_dict'
     if not reset:
         try:
             path_dict = read_pickle(name, path=path)
             return path_dict
         except FileNotFoundError:
-            path_dict = {'hdf_path': 0, 'groups': {}}
-            write_pickle(path_dict, 'path_dict', path=path_data)
+            path_dict = {'hdf_path': init_hdf(), 'groups': {}, 'current_resample_step': {}, 'extra': 'all_data'}
+            write_pickle(path_dict, name, path=path_data)
             return path_dict
     else:
-        path_dict = {'hdf_path': 0, 'groups': {}}
-        write_pickle(path_dict, 'path_dict', path=path_data)
+        path_dict = {'hdf_path': init_hdf(), 'groups': {}, 'current_resample_step': {}, 'extra': 'all_data'}
+        write_pickle(path_dict, name, path=path_data)
         return path_dict
 
 
@@ -106,11 +180,11 @@ def get_hdf_path(**kwargs):
     return hdf_path
 
 
-def get_group(group_number=None, **kwargs):
+def get_group(group_id=None, **kwargs):
     path_dict = get_path_dict(**kwargs)
     groups = path_dict['groups']
-    if group_number is not None:
-        return groups[group_number]
+    if group_id is not None:
+        return groups[group_id]
     else:
         return groups
 
@@ -138,7 +212,7 @@ def data_csv_to_list_dfs(path_trajectory_data):
     Note that the conversion is dependent on the chosen format of LUTS lab (EPFL) to share pNEUMA trajectory data
     :return: List of DataFrames, with every index an individual trajectory
     """
-    csv.field_size_limit(sys.maxsize)
+    csv.field_size_limit(maxInt)
     data_file = open(path_trajectory_data, 'r')
     data_reader = csv.reader(data_file)
     data = []
@@ -159,80 +233,104 @@ def data_csv_to_list_dfs(path_trajectory_data):
             # time in ms
             df.time = df.time * 1000
             data.append(df)
-    log('csv-file with trajectory data converted to list of dataframes', 20)
+    log('[CSV] converted to list of dataframes', 20)
     return data
 
 
-def data_csv_to_hdf5(path_trajectory_data, group_number, data_name=None, process_time=True, **kwargs):
+def data_csv_to_hdf5(path_trajectory_data, process_time=True, **kwargs):
     """
     Read raw csv data
     Structure every individual trajectory in a pandas dataframe and append to a list object comprising all trajectories
 
-    :param path_trajectory_data: path to file with csv file of pNEUMA trajectory data
+    Parameters
+    ----------
+
+    path_trajectory_data: path to file with csv file of pNEUMA trajectory data
     Note that the conversion is dependent on the chosen format of LUTS lab (EPFL) to share pNEUMA trajectory data
-    :param data_name: name of data set to assign to group key in HDF5,
-    if none the last piece of the path string is taken
-    :return: List of DataFrames, with every index an individual trajectory
+    in_memory:
+    process_time: print elapsed time
+    **kwargs: additional parameters for init_hdf function
+
+    Returns
+    ----------
+    return: None, data is written to HDF5 instance on disk. Log message added to corresponding folder.
     """
     tic = time.time()
-    if data_name is None:
+    if sys.platform == "win32":
+        split_name = path_trajectory_data.rsplit("\\")[-1].rsplit('.')[0]
+    else:
         split_name = path_trajectory_data.rsplit('/')[-1].rsplit('.')[0]
-        data_info = split_name.rsplit('_')
-        # Nested info: date, drone, time
-        data_name = f'day{data_info[0]}/{data_info[1]}/time{data_info[2]}'
+    data_info = split_name.rsplit('_')
+    # Nested info: date, drone, time
+    data_name = f'day{data_info[0]}/{data_info[1]}/time{data_info[2]}'
     hdf_fn = init_hdf(**kwargs)
     tr_group = f'/{data_name}'
-    path_dict = get_path_dict()
-    path_dict['hdf_path'] = hdf_fn
-    path_dict['groups'][group_number] = data_name
-    write_pickle(path_dict, 'path_dict', path=path_data)
-    csv.field_size_limit(sys.maxsize)
-    data_file = open(path_trajectory_data, 'r')
-    data_reader = csv.reader(data_file)
+    csv.field_size_limit(maxInt)
+    print("Start reading csv…")
+    #  Create new table in HDF5 with 'track_id', 'type', 'traveled_d' and 'speed'
     hdf_id = tr_group + '/all_id'
-    tr_id = pd.read_csv(path_trajectory_data, sep=';', header=None, skiprows=[0], usecols=[0, 1, 2, 3],
-                        dtype={0: 'int64', 1: 'category', 2: 'float16', 3: 'float16'})
-    tr_id.columns = ['track_id', 'type', 'traveled_d', 'avg_speed']
-    tr_id.to_hdf(hdf_fn, key=hdf_id, format='table', data_columns=['track_id', 'type'], append=False, mode='a')
+    val = csv.reader(open(path_trajectory_data, 'r'), delimiter=';')
+    header = next(val)
+    header = [i.strip() for i in header]
+    data = pd.DataFrame(columns=header[:4])
+    df_all = []
+    fps = 0
+    for line in tqdm(val):
+        data.loc[len(data)] = line[:4]
+        if round(float(line[9]) * 1000) % 40 > 0.0001:  # row 9 is time column
+            fps = 1
+        _ = line.pop()
+        tmp_df = pd.DataFrame({j: pd.Series(line[(i + 4)::6], dtype='float64') for i, j in enumerate(header[4:])})
+        tmp_df.insert(0, 'track_id', [int(line[0])] * len(tmp_df))
+        df_all.append(tmp_df)
+    data = data.astype({'track_id': 'int64', 'type': 'category', 'traveled_d': 'float64', 'avg_speed': 'float64'})
+    #print(data.head())
+    #print(data.dtypes)
+    data.to_hdf(hdf_fn, key=hdf_id, format='table', data_columns=['track_id', 'type'], append=False, mode='a')
     toc1 = time.time()
     if process_time:
-        print(f'{toc1 - tic} sec')
-    col_line = 0
-    data = []
-    for row in tqdm(data_reader):
-        cl = [elem for elem in row[0].split("; ")]
-        if col_line == 0:
-            cl_type = [e for e in cl if e not in ['track_id', 'type', 'traveled_d', 'avg_speed']]
-        else:
-            cl.pop()
-            df = pd.DataFrame({j: pd.Series(cl[(i + 4)::6], dtype='float64') for i, j in enumerate(cl_type)})
-            # time in ms
-            df.time = [int(round(i * 1000)) for i in df.time.to_list()]
-            df.insert(0, 'track_id', pd.Series([cl[0]] * len(df), dtype='int64'))
-            data.append(df)
-        col_line += 1
+        print(f'/all_id table written to HDF5, took {toc1 - tic} sec')
+    val = pd.concat(df_all, axis=0)
+    if fps == 0:
+        # time in ms
+        val.loc[:, 'time'] = val.loc[:, 'time'].values * 1000
+        val = val.astype({'time': 'int64'})
+    elif fps == 1:
+        print("Check time rate, not equal to stated rate of 40 ms")
+        val.loc[:, 'time'] = val.loc[:, 'time'].values * 1000
+        val = val.astype({'time': 'int64'})
+    #print(val.dtypes)
+    #print('concat done', time.time() - toc1)
+    val.loc[:, 'x'], val.loc[:, 'y'] = project_improved(val.lon.values, val.lat.values)
+    #print('projection done', time.time() - toc1)
+    hdf_traj = tr_group + '/original_trajectories'
+    #print(val.head())
+    val.to_hdf(hdf_fn, key=hdf_traj, format='table', data_columns=['track_id', 'time'], mode='a')
+    path_dict = get_path_dict()
+    group_id = group_id_from_path(path_trajectory_data)
+    path_dict['hdf_path'] = hdf_fn
+    path_dict['groups'][group_id] = data_name
+    path_dict['current_resample_step'][group_id] = 40
+    write_pickle(path_dict, 'path_dict', path=path_data)
     toc2 = time.time()
     if process_time:
-        print(f'{toc2 - toc1} sec')
-    df_all = pd.concat(data, axis=0)
-    x, y = zip(*project_point(list(zip(df_all.lon, df_all.lat))))
-    df_all = df_all.assign(x=x, y=y)
-    hdf_traj = tr_group + '/original_trajectories'
-    df_all.to_hdf(hdf_fn, key=hdf_traj, format='table', data_columns=['track_id', 'time'], mode='a')
-    toc3 = time.time()
-    if process_time:
-        print(f'{toc3 - toc2} sec')
-        print(f'Total time: {toc3 - tic} sec')
-    log('csv-file with trajectory data converted to hdf5', 20)
+        print(f'/original_trajectories table written to HDF5, took {toc2 - toc1} sec')
+        print(f'Total time: {toc2 - tic} sec')
+    log(f'[CSV] GROUP: {data_name} converted to hdf5', 20)
+    return hdf_fn, data_name
 
 
-def new_dfs(ldf, key, bearing=True, resample=True, step=1000):
+def new_dfs(ldf, group_id, bearing=True, resample=True, step=1000):
     tic = time.time()
     new_ldf = []
+    path_dict = get_path_dict()
+    key = path_dict['groups'][group_id]
     for df in tqdm(ldf):
         if bearing:
             df = add_bearing(df)
         if resample:
+            path_dict['current_resample_step'][group_id] = int(step)
+            write_pickle(path_dict, 'path_dict', path=path_data)
             df = resample_time_rate(df, time_step=step)
         new_ldf.append(df)
     df_all = pd.concat(new_ldf, axis=0)
@@ -347,4 +445,13 @@ def main(path_to_csv=None, filename=init_name):
             print(ms)
             log(ms, 20)
 
-# df_street = pd.read_csv('street_information.csv', header=0)
+
+def io_data(group_id):
+    data_path = get_data_dict()
+    try:
+        data = data_path[group_id]
+    except KeyError:
+        group_id = add_data_path()
+        data = data_path[group_id]
+    hdf_name, group_path = data_csv_to_hdf5(data)
+    return hdf_name, group_path

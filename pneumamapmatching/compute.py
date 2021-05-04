@@ -1,6 +1,7 @@
-# Calculate parameters from countings
+# Calculate parameters from counts
 # Draw FD by using the special points of fundamental diagrams
 import pandas as pd
+import geopandas as gpd
 import numpy as np
 import pickle
 import matplotlib.pyplot as plt
@@ -13,10 +14,112 @@ from scipy.optimize import curve_fit
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import PolynomialFeatures
-#from statsmodels.graphics.gofplots import qqplot
+# from statsmodels.graphics.gofplots import qqplot
 import operator
 import scipy
-import geopy.distance as dist
+import geopy.distance as geodist
+import leuvenmapmatching.util.dist_latlon as distlatlon
+import leuvenmapmatching.util.dist_euclidean as distxy
+
+
+def vehicle_crossings(gdf_traj, d_gdf, bearing_difference=90, strict_match=True):
+    tic = time.time()
+    print('Start: …searching crossings')
+    assert isinstance(gdf_traj, gpd.GeoDataFrame)
+    assert {'n_det', 'lonlat'}.issubset(set(d_gdf.attrs.keys()))
+    assert {'line_length_latlon', 'line_length_yx'}.issubset(set(gdf_traj.columns))
+    n_det = d_gdf.attrs['n_det']
+    lonlat = d_gdf.attrs['lonlat']
+    c1, c2 = 'x', 'y'
+    if lonlat:
+        c1, c2 = 'lon', 'lat'
+    # column multi-index
+    col_names = [[f'cross_{c1}{i}', f'cross_{c2}{i}', f'rid{i}',
+                  f'd{i}', f't{i}', f'v{i}'] for i in range(1, n_det + 1)]
+    col_names = [item for sublist in col_names for item in sublist]
+    feature = False
+    if 'det_signal1' in d_gdf.columns:
+        col_names = [[f'cross_{c1}_ts{i}', f'cross_{c2}_ts{i}', f'rid_ts{i}',
+                      f'd_ts{i}', f't_ts{i}', f'v_ts{i}'] for i in range(1, n_det + 1)]
+        col_names = [item for sublist in col_names for item in sublist]
+        tuples = [(i[0], i[1], col_names[v]) for i, j in d_gdf.iterrows() for v in range(0, 6)]
+        col_index = pd.MultiIndex.from_tuples(tuples, names=['edge', 'node', 'detector'])
+        d_gdf = d_gdf.reset_index()
+        detector_column = 'det_signal'
+        feature = True
+    else:
+        col_index = pd.MultiIndex.from_product([d_gdf['_id'], col_names], names=['edge', 'detector'])
+        detector_column = 'det_edge_'
+    if isinstance(gdf_traj.index, pd.MultiIndex):
+        assert gdf_traj.index.names.index('track_id') == 0
+        row_index = set(gdf_traj.index.get_level_values(0))
+    else:
+        row_index = set(gdf_traj['track_id'])
+        gdf_traj.set_index(['track_id', 'rid'], inplace=True)
+    p1 = list(zip(*(gdf_traj[f'{c2}_1'], gdf_traj[f'{c1}_1'])))
+    gdf_traj['p1'] = p1
+    df_result = pd.DataFrame(index=row_index, columns=col_index)
+    df = gdf_traj
+    for i, det_link in tqdm(d_gdf.iterrows(), total=d_gdf.shape[0]):  # Counting vehicles for every used edge
+        df_bool_wm = df[['wm1', 'wm2']].values < bearing_difference
+        df_wm = df[np.logical_and(df_bool_wm[:, 0], df_bool_wm[:, 1])]
+        if strict_match:
+            df_bool_edge = df_wm[['u_match', 'v_match']].values == det_link['_id']
+        else:
+            df_bool_edge = df_wm[['u_match', 'v_match']].values >= 0
+        df_u = df_wm[df_bool_edge[:, 0]].index.to_list()
+        df_v = df_wm[df_bool_edge[:, 1]].index.to_list()
+        set_index = set(df_u + df_v)
+        if len(set_index) == 0:
+            continue
+        df2 = df_wm.loc[set_index]
+        for n in range(1, n_det + 1):
+            df_search = df2['geometry'].values.intersects(det_link[f'{detector_column}{n}'])
+            df_intersect = df2[df_search].index.to_list()
+            if not df_intersect:
+                continue
+            tid, rid = zip(*df_intersect)
+            df_search_cross = df2[df_search]
+            df_cross = df_search_cross['geometry'].values.intersection(det_link[f'{detector_column}{n}'])
+            df_cross = [(c.y, c.x) for c in df_cross]
+            if lonlat:
+                df_dist = np.array([round(distlatlon.distance(*yx), 3) for yx in zip(df_search_cross.p1, df_cross)])
+            else:
+                df_dist = np.array([round(distxy.distance(*yx), 3) for yx in zip(df_search_cross.p1, df_cross)])
+            t, v = interpolate_crossing(df_search_cross, df_dist, lonlat=lonlat)
+            df_c2, df_c1 = zip(*df_cross)
+            if not feature:
+                df_result.loc[list(tid), (det_link["_id"], f'rid{n}')] = list(rid)
+                df_result.loc[list(tid), (det_link["_id"], f'cross_{c1}{n}')] = df_c1
+                df_result.loc[list(tid), (det_link["_id"], f'cross_{c2}{n}')] = df_c2
+                df_result.loc[list(tid), (det_link["_id"], f'd{n}')] = df_dist
+                df_result.loc[list(tid), (det_link["_id"], f't{n}')] = t
+                df_result.loc[list(tid), (det_link["_id"], f'v{n}')] = v
+            else:
+                df_result.loc[list(tid), (det_link["_id"], det_link["index"], f'rid_ts{n}')] = list(rid)
+                df_result.loc[list(tid), (det_link["_id"], det_link["index"], f'cross_{c1}_ts{n}')] = df_c1
+                df_result.loc[list(tid), (det_link["_id"], det_link["index"], f'cross_{c2}_ts{n}')] = df_c2
+                df_result.loc[list(tid), (det_link["_id"], det_link["index"], f'd_ts{n}')] = df_dist
+                df_result.loc[list(tid), (det_link["_id"], det_link["index"], f't_ts{n}')] = t
+                df_result.loc[list(tid), (det_link["_id"], det_link["index"], f'v_ts{n}')] = v
+    df_result.sort_index(inplace=True)
+    df_result = df_result.transpose()
+    toc = time.time()
+    print(f'Finding crossings done, took {toc - tic} sec')
+    return df_result
+
+
+def interpolate_crossing(df, p, lonlat=False):
+    assert 'time' in df.columns
+    assert 'speed_1' and 'speed_2' in df.columns
+    assert {'line_length_latlon', 'line_length_yx'}.issubset(set(df.columns))
+    if lonlat:
+        dist = df.line_length_latlon.values
+    else:
+        dist = df.line_length_yx.values
+    t = np.round(df.time.values - 1000 + p / dist * 1000)
+    v = np.round((df.speed_2.values - df.speed_1.values) * (t - df.time.values + 1000) / 1000 + df.speed_1.values, 3)
+    return t, v
 
 
 def cleaning_counting(det_c, n_det, double_loops=False):
@@ -144,11 +247,11 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
                                     f = 1  # tag to mark index that intersects with detector, prevents errors in traveled
                                     # distance calculation
                                     tag[m][det - 1] = 1
-                                    d12 = dist.distance(d1[n][idx], d2[n][idx]).m
+                                    d12 = geodist.distance(d1[n][idx], d2[n][idx]).m
                                     c = traj_match_values[m][idx][4].intersection(det_link[f'det_edge_{det}'])
                                     c = (c.y, c.x)
-                                    d1c = round(dist.distance(d1[n][idx], c).m, 3)
-                                    dc2 = round(dist.distance(c, d2[n][idx]).m, 3)
+                                    d1c = round(geodist.distance(d1[n][idx], c).m, 3)
+                                    dc2 = round(geodist.distance(c, d2[n][idx]).m, 3)
                                     cnt_x[f'x_{det}'] = 1
                                     if double_loops:
                                         cnt_x[f'x_{det}'] = dc2
@@ -158,9 +261,9 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
                                         cnt_x[f'x_{det}'] = \
                                             round((traj_match_values[m][idx][3] - freq * g) /
                                                   (traj_match_values[m][idx][3] - traj_t[f't_{det}'])
-                                                  * dist.distance(c, d2[n][idx]).m, 3)
+                                                  * geodist.distance(c, d2[n][idx]).m, 3)
                                         edge_counts[f'counts_{det}'][g - 1][m] = round(
-                                            dist.distance(c, d2[n][idx]).m -
+                                            geodist.distance(c, d2[n][idx]).m -
                                             cnt_x[f'x_{det}'], 3)
                                         if not double_loops:
                                             cnt_x[f'x_{det}'] = 0
@@ -169,33 +272,33 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
                                 if double_loops:
                                     if traj_match_values[m][idx][4].intersects(det_link[f'det_edge_{det}bis']):
                                         tag_lp[m][det - 1] = 1
-                                        d12 = dist.distance(d1[n][idx], d2[n][idx]).m
+                                        d12 = geodist.distance(d1[n][idx], d2[n][idx]).m
                                         c_lp = traj_match_values[m][idx][4].intersection(det_link[f'det_edge_{det}bis'])
                                         c_lp = (c_lp.y, c_lp.x)
-                                        d1c = round(dist.distance(d1[n][idx], c_lp).m, 3)
+                                        d1c = round(geodist.distance(d1[n][idx], c_lp).m, 3)
                                         cnt_x[f'x_lp_{det}'] = d1c
                                         traj_t[f't_lp_{det}'] = round(
                                             traj_match_values[m][idx][3] - 1000 + d1c / d12 * 1000)
                                         if traj_t[f't_lp_{det}'] < (freq * g):  # crossing in previous time step
                                             edge_times[f'times_lp_{det}'][g - 1][m] = traj_t[f't_lp_{det}']
                                             edge_counts[f'counts_lp_{det}'][g - 1][m] = round(
-                                                dist.distance(d1[n][idx],
-                                                              c_lp).m, 3)
+                                                geodist.distance(d1[n][idx],
+                                                                 c_lp).m, 3)
                                             if f > 0:
                                                 edge_counts[f'counts_lp_{det}'][g - 1][m] = \
-                                                    round(dist.distance(c, c_lp).m, 3)
+                                                    round(geodist.distance(c, c_lp).m, 3)
                                                 edge_counts[f'counts_{det}'][g - 1][m] = 0
                                                 # round(dist.distance(c, c_lp).m, 3)
                                                 cnt_x[f'x_{det}'] = 0
                                             traj_t[f't_lp_{det}'] = 0
                                             cnt_x[f'x_lp_{det}'] = 0
                                         elif f > 0:  # same line crosses both detectors
-                                            cnt_x[f'x_lp_{det}'] = round(dist.distance(c, c_lp).m, 3)
+                                            cnt_x[f'x_lp_{det}'] = round(geodist.distance(c, c_lp).m, 3)
                                             # print('Direct crossing ' + str(cnt_x['x_lp_' + str(det)]))
                                             cnt_x[f'x_{det}'] = 0
                                             if g > 0:
                                                 if edge_times[f'times_{det}'][g - 1][m]:
-                                                    cnt_x[f'x_lp_{det}'] = round(dist.distance(c, c_lp).m -
+                                                    cnt_x[f'x_lp_{det}'] = round(geodist.distance(c, c_lp).m -
                                                                                  edge_counts[f'counts_{det}'][
                                                                                      g - 1][m], 3)
                                         elif traj_match_values[m][idx][3] - 1000 < (freq * g):
@@ -207,7 +310,7 @@ def count_vehicles(d_gdf, gdf_traj, n_det, freq, double_loops, mode_exclusion=()
                                                 edge_counts[f'counts_{det}'][g - 1][m] + (d1c - cnt_x[f'x_lp_{det}'])
                                             # Add extra distance to existing value
                                     elif tag[m][det - 1] > 0 and tag_lp[m][det - 1] < 1 and f < 1:
-                                        d_int = round(dist.distance(d1[n][idx], d2[n][idx]).m, 3)
+                                        d_int = round(geodist.distance(d1[n][idx], d2[n][idx]).m, 3)
                                         if traj_match_values[m][idx][3] - 1000 < (freq * g):
                                             cnt_x[f'x_{det}'] = round((traj_match_values[m][idx][3] - freq * g) /
                                                                       1000 * d_int, 3)

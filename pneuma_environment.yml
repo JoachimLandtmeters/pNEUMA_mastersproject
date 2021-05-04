@@ -1,0 +1,18 @@
+name: pneuma
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8.8
+  - ipykernel=5.5.3
+  - osmnx=1.0.1
+  - h5py=3.1.0
+  - pytables=3.6.1
+  - geopy=2.1.0
+  - bokeh
+  - tqdm
+  - pip
+  - pip:
+    - leuvenmapmatching=0.5.3
+    - smopy
+

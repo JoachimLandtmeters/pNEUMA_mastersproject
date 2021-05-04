@@ -4,21 +4,26 @@
 # Start and End node of matched edge in dataframe of trajectories --> link between theoretical network and measured data
 from pneumapackage.settings import bb_athens
 from pneumapackage.__init__ import path_data, path_results, write_pickle, read_pickle
+from pneumapackage.settings import *
+import pneumapackage.compassbearing as cpb
+
 import osmnx as ox
 import matplotlib.pyplot as plt
 import pandas as pd
 import geopandas as gpd
 import time
 import numpy as np
+
 import leuvenmapmatching as lm
 from leuvenmapmatching.map.inmem import InMemMap
 from leuvenmapmatching.matcher.distance import *
 from leuvenmapmatching import visualization as mmviz
-import leuvenmapmatching.util.dist_latlon as lm_dist
-import leuvenmapmatching.util.dist_euclidean as lm_dist_euclidean
+import leuvenmapmatching.util.dist_latlon as distlatlon
+import leuvenmapmatching.util.dist_euclidean as distxy
+import geopy.distance as geodist
+
 from tqdm import tqdm
 from tqdm.contrib import tenumerate
-import pneumapackage.compassbearing as cpb
 from shapely.geometry import Point, LineString
 from pyproj import Proj, transform
 # import similaritymeasures
@@ -26,26 +31,13 @@ from collections import Counter
 import rtree
 import sys
 
-""" 
-with open('athens_network_dbl.pkl', 'rb') as f:
-    athens_network = pickle.load(f)
 
-with open('network_matrix_dbl.pkl', 'rb') as g:
-    network_edges = pickle.load(g)
-
-with open('trajectories_moving.pkl', 'rb') as h:
-    trajectories_moving = pickle.load(h)
-"""
 logger = False
 
 if logger:
     logger = lm.logger
     logger.setLevel(logging.DEBUG)
     logger.addHandler(logging.StreamHandler(sys.stdout))
-
-
-# netw = cn.CreateNetwork(bounding_box=bb_athens)
-# netw.network_dfs()
 
 
 class MapMatching:
@@ -158,7 +150,7 @@ class MapMatching:
 
 class TransformTrajectories:
 
-    def __init__(self, tr_match_all, used_network):
+    def __init__(self, tr_match_all, network_obj):
         tic = time.time()
         # tr_match_all is a concatenated dataframe
         # set multiindex with track_id and row number
@@ -175,16 +167,15 @@ class TransformTrajectories:
         self.gdf_point = []
         self.gdf_line = []
         self.column_names = []
-        self.used_network = used_network
+        self.network = network_obj.network_edges
         self.edges_counts = pd.DataFrame()
-
         self.tracks_line = self.wrong_match()
         toc = time.time()
         print(toc - tic)
 
     def wrong_match(self):
         tic = time.time()
-        gdf_netw = self.used_network
+        gdf_netw = self.network
         ldf_all = self.tracks_point.copy()
         # Do operations on total dataframe
         ldf_all = ldf_all.join(gdf_netw['bearing'], how='left', rsuffix='_edge', on='_id')
@@ -209,6 +200,15 @@ class TransformTrajectories:
         ldf_start.drop(['_id', 'n1', 'n2', 'wrong_match', 'time'], axis=1, inplace=True)
         ldf_line = ldf_start.join(ldf_end[['lat', 'lon', 'speed', 'lon_acc', 'lat_acc', 'time', 'x', 'y',
                                            'bearing']], lsuffix='_1', rsuffix='_2')
+        p1 = list(zip(*(ldf_line[f'lat_1'], ldf_line[f'lon_1'])))
+        p2 = list(zip(*(ldf_line[f'lat_2'], ldf_line[f'lon_2'])))
+        line_distlatlon = [round(distlatlon.distance(*xy), 3) for xy in tqdm(zip(p1, p2), total=len(p1))]
+        p1 = list(zip(*(ldf_line[f'y_1'], ldf_line[f'x_1'])))
+        p2 = list(zip(*(ldf_line[f'y_2'], ldf_line[f'x_2'])))
+        line_distyx = [round(distxy.distance(*xy), 3) for xy in tqdm(zip(p1, p2), total=len(p1))]
+        ldf_line['line_length_latlon'] = line_distlatlon
+        ldf_line['line_length_yx'] = line_distyx
+        print('Line length column added')
         toc = time.time()
         print(toc - tic)
         return ldf_line
@@ -227,7 +227,7 @@ class TransformTrajectories:
 
     def select_rows(self, segment_index=None):
         gdf_list = self.tracks_point
-        gdf_netw = self.used_network
+        gdf_netw = self.network
         if segment_index is None:
             segment_index = gdf_netw._id.to_list()
         traj_eval = []
@@ -404,7 +404,7 @@ class TransformTrajectories:
 
     def interesting_edges(self, sort=False):
         list_traj = self.tracks_point
-        gdf_netw = self.used_network
+        gdf_netw = self.network
         ed = []
         nan_ed = []
         for k, l in enumerate(tqdm(list_traj)):
@@ -466,20 +466,24 @@ def make_gdf(df, line=False, latlon=False):
     if not line:
         if latlon:
             p = df.lon, df.lat
+            crs = crs_pneuma
         else:
             p = df.x, df.y
+            crs = crs_pneuma_proj
         geometry = [Point(xy) for xy in zip(*p)]
     else:
         if latlon:
             p1 = df.lon_1, df.lat_1
             p2 = df.lon_2, df.lat_2
+            crs = crs_pneuma
         else:
             p1 = df.x_1, df.y_1
             p2 = df.x_2, df.y_2
+            crs = crs_pneuma_proj
         s = [Point(yx) for yx in zip(*p1)]
         e = [Point(yx) for yx in zip(*p2)]
         geometry = [LineString(xy) for xy in zip(s, e)]
-    df = gpd.GeoDataFrame(df, geometry=geometry, crs='epsg:4326')
+    df = gpd.GeoDataFrame(df, geometry=geometry, crs=crs)
     return df
 
 

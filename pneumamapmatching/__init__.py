@@ -8,7 +8,8 @@ import os
 from pathlib import Path
 import pickle
 
-import pneumapackage.settings
+from .settings import *
+from ._api import *
 
 # Folders to store intermediate results and data sets
 # Created in working directory of run python script
@@ -16,17 +17,23 @@ import pneumapackage.settings
 results_folder = 'results'
 data_folder = 'data'
 Path(os.getcwd()+"/"+data_folder).mkdir(parents=True, exist_ok=True)
+Path(os.getcwd()+"/"+results_folder + "/plots").mkdir(parents=True, exist_ok=True)
+Path(os.getcwd()+"/"+results_folder + "/crossings").mkdir(parents=True, exist_ok=True)
+Path(os.getcwd()+"/"+data_folder + "/shapefiles").mkdir(parents=True, exist_ok=True)
+Path(os.getcwd()+"/"+results_folder + "/case_studies").mkdir(parents=True, exist_ok=True)
 Path(os.getcwd()+"/"+results_folder).mkdir(parents=True, exist_ok=True)
 
 # Folders to store intermediate results and data sets
-path_data = os.getcwd() + '/' + data_folder + '/'
-path_results = os.getcwd() + '/' + results_folder + '/'
+path_data = os.path.join(os.getcwd(), data_folder)
+path_results = os.path.join(os.getcwd(), results_folder)
+path_case_studies = os.path.join(os.getcwd(), results_folder, 'case_studies')
 
 
 def write_pickle(obj, filename, path=None):
     if path is None:
         path = os.getcwd()
-    filename = path + filename
+    filename = os.path.join(path, filename)
+    filename = os.path.normpath(filename)
     with open(filename, 'wb') as a:
         pickle.dump(obj, a)
 
@@ -34,7 +41,8 @@ def write_pickle(obj, filename, path=None):
 def read_pickle(filename, path=None):
     if path is None:
         path = os.getcwd()
-    filename = path + filename
+    filename = os.path.join(path, filename)
+    filename = os.path.normpath(filename)
     with open(filename, 'rb') as a:
         obj = pickle.load(a)
     return obj
