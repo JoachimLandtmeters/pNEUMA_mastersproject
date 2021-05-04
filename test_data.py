@@ -21,7 +21,12 @@ from pathlib import Path
 
 # Initialize dataset
 
-data_dict = rd.initialize_data_paths(r"C:\Users\u0139414\Desktop\pneuma_data")
+# Specify path to folder with data files, for windows using raw string input is advised
+specify_data_path = None
+if specify_data_path is None:
+    specify_data_path = input('Specify path to folder with all data files: ')
+    # If on windows replace single backslash with double backslash
+data_dict = rd.initialize_data_paths(specify_data_path)
 
 
 def get_hdf_names(group_id):
