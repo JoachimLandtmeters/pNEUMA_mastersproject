@@ -9,7 +9,7 @@ Overview
 
     * - docs
       - |docs|
-.. |docs| target:: https://pneuma-mastersproject.readthedocs.io/en/latest/
+.. target:: https://pneuma-mastersproject.readthedocs.io/en/latest/
     :alt: pNEUMA documentation
 .. end-badges
 
