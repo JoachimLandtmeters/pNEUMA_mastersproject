@@ -9,8 +9,7 @@ Overview
 
     * - docs
       - |docs|
-.. |docs| image:: https://pneuma-mastersproject.readthedocs.io/en/latest/badge/?style=flat
-    :target: https://pneuma-mastersproject.readthedocs.io/en/latest/
+.. |docs| target:: https://pneuma-mastersproject.readthedocs.io/en/latest/
     :alt: pNEUMA documentation
 .. end-badges
 
