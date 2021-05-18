@@ -8,7 +8,6 @@ Overview
     :stub-columns: 1
 
     * - docs
-      - |docs|
 .. target:: https://pneuma-mastersproject.readthedocs.io/en/latest/
     :alt: pNEUMA documentation
 .. end-badges
