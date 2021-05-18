@@ -9,7 +9,7 @@ Overview
 Traffic characteristic estimation from large scale trajectory dataset
 =====================================================================
 
-The code in this repository was part of a masters thesis and is currently further developed at L-Mob Research Centre at KU Leuven.
+The code in this repository was part of a masters thesis and is currently further developed at ITSCrealab at KU Leuven, Faculty of Engineering.
 
 The trajectory data acquired by drones from the pNEUMA Experiment are linked to the underlying network to get macroscopic traffic characteristics at any location in the network by placing virtual loops.
 
