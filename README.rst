@@ -2,15 +2,7 @@
 Overview
 ========
 
-.. start-badges
-
-.. list-table::
-    :stub-columns: 1
-
-    * - docs
-.. target:: https://pneuma-mastersproject.readthedocs.io/en/latest/
-    :alt: pNEUMA documentation
-.. end-badges
+[pNEUMA Documentation](https://pneuma-mastersproject.readthedocs.io/en/latest/)
 
 Traffic characteristic estimation from large scale trajectory dataset
 =====================================================================
